@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "99108983685",
+    "project_id": "siteki-1f0a3",
+    "storage_bucket": "siteki-1f0a3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:99108983685:android:c72d050595947e14c62aec",
+        "android_client_info": {
+          "package_name": "com.example.sitekiver01"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAdBuelR8HlafmBasVku_tTHDxthKR2jRk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
