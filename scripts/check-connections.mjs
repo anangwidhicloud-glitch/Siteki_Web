@@ -10,6 +10,7 @@ const checks = [
   ["Laporan kerja", () => apiGet(ENDPOINTS.jobs, { action: "getDataLapKerja", bulan: "", tglAwal: "", tglAkhir: "" }), (x) => asArray(x).length],
   ["Listrik", () => apiGet(ENDPOINTS.electricity), (x) => Object.keys(x || {}).length],
   ["Stok part", () => apiGet(ENDPOINTS.stock, { action: "getStokPart", bulan: "" }), (x) => asArray(x).length],
+  ["Master part laporan", () => apiGet(ENDPOINTS.partMaster, { action: "getPart" }), (x) => asArray(x, ["stok","parts"]).length],
   ["Metadata order part", () => apiGet(ENDPOINTS.partOrder, { action: "getMetadataOrder" }), (x) => Object.keys(x || {}).length],
   ["Daftar bon", () => apiGet(ENDPOINTS.partRequests, { action: "getDaftarBon" }), (x) => asArray(x).length],
   ["Data trafo", () => apiGet(ENDPOINTS.transformerData, { action: "getDataTravo" }), (x) => asArray(x).length],

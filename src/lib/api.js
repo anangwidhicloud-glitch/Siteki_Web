@@ -1,16 +1,20 @@
 const BASE = "https://script.google.com/macros/s/";
+const responseCache = new Map();
+const pendingRequests = new Map();
 
 export const ENDPOINTS = {
   login: `${BASE}AKfycbzzdAkBlB9PVR3aAtPmkuZ5OCO9Cz31S-zlGiQfPcPsUkhTfjsHQt6gasEO4qNvSFU/exec`,
-  dashboardOrders: `${BASE}AKfycbyP84TUvoujsa0uuCYLR172Ft7EHzY_ofH_XkmJnYh1Y3qDICdSnlBBkGf9VU1WivQ/exec`,
-  orders: `${BASE}AKfycbw5xLyV1iIkfNofQsJC87fYscocDAJ8GU5iQh1WunHjYy8zS-T6sFkb77z79AptiTY/exec`,
-  createOrder: `${BASE}AKfycbzvd9W_bXkvRd5J0j3xU_ytpKfoo7pMS57wBeBOkKl991DcH10qElnrIdUvUKdwc30/exec`,
-  completeOrder: `${BASE}AKfycbyEz9WL-SsHlsl8nROHs28HVijqVu_UptKDuLMBI3z2mo6pDH_vIxOVM9B_fjmNow/exec`,
+  users: `${BASE}AKfycbw2rSZ0GAJJv3PMtrXTeKktphfRYBHzQ4-2NJQ0vWU2_9k329UGC-2uancWWbgFnv4/exec`,
+  dashboardOrders: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
+  orders: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
+  createOrder: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
+  completeOrder: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
   maintenance: `${BASE}AKfycbwQ7ocBNsl4x5-rGLrSyvkyluhSRl3B_LvmkA3cFuvuL9pBbVAOUI3i_Vu6jwfkfOA/exec`,
   maintenanceMaster: `${BASE}AKfycbwSnaaYVxXWVngeGQYU2im2G5FQ6L7WstjTkx7IW3jVYcuELECt0_cyvM0cFx4Uf8U/exec`,
-  jobs: `${BASE}AKfycbwYHHf8ONKbs9m5CppnzUuo067CBvrqRRfLYzl5ABwOH81sVWnFD8AyPx6F6Vf3uC4/exec`,
+  jobs: `${BASE}AKfycbyXwUhvZfhImtUBGpno8irGpYokkCnYmbx5HcOS88wogDpaUmAdOFKpv_wuoRKET6A/exec`,
   electricity: `${BASE}AKfycbx4YbnLXFsnwDDV-Kso7Lx3Cu2R6tEYBkaEnRM_fnU-RBUoSWo-xZR9DIoHfzjwYd0/exec`,
   stock: `${BASE}AKfycbxHnZzPQ3jCrMU3tvRGTiQnBIZe7pETN7iWr8e4amU4cdgi22TVzEFjB84ZXUohBDvD/exec`,
+  partMaster: `${BASE}AKfycbyLAKLUbUpzWwuR3KSet3pPyEQhV9d1pWuqduAToyYPeZpQm96AFJM7gPHaL5mTyeum/exec`,
   partOrder: `${BASE}AKfycbwHVQ2pB4rKZXuZTLcffgIAHiRgo4lP_wPCieNNOd2XFdOxhHehcoo5DgxSBd2wUl8/exec`,
   partRequests: `${BASE}AKfycbxJOKT1yM71bQr1PbJSJ7X6q-RdJ1nmUpjvutRzkBvIYuPbZM2cGh3NuQ0X62GCJkVd/exec`,
   transformer: `${BASE}AKfycbyX0U2MaTrjBTZjLkTH64E3bIXg2lyHhtPdTJ1QbEFco34m3FK18gDDE0Lqk7ja-k-C/exec`,
@@ -33,6 +37,26 @@ function withQuery(url, params = {}) {
   return target.toString();
 }
 
+function requestKey(endpoint, params = {}) {
+  const query = Object.entries(params)
+    .filter(([,value]) => value !== undefined && value !== null && value !== "")
+    .sort(([left],[right]) => left.localeCompare(right))
+    .map(([key,value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join("&");
+  return `${endpoint}?${query}`;
+}
+
+function isReadAction(params = {}) {
+  const action = String(params.action || "");
+  return !action || /^(get|list|fetch|summary|check)/i.test(action);
+}
+
+export function clearApiCache(endpoint) {
+  for (const key of responseCache.keys()) {
+    if (!endpoint || key.startsWith(endpoint)) responseCache.delete(key);
+  }
+}
+
 async function parseResponse(response) {
   const text = await response.text();
   if (!response.ok) throw new Error(`Permintaan server gagal (HTTP ${response.status}).`);
@@ -45,19 +69,34 @@ async function parseResponse(response) {
 }
 
 export async function apiGet(endpoint, params = {}, options = {}) {
+  const cacheable = options.cache !== false && isReadAction(params);
+  const key = requestKey(endpoint, params);
+  const ttl = options.cacheTtl ?? 30000;
+  const cached = cacheable ? responseCache.get(key) : null;
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cacheable && pendingRequests.has(key)) return pendingRequests.get(key);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    const response = await fetch(withQuery(endpoint, params), {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-      redirect: "follow"
-    });
-    return await parseResponse(response);
-  } finally {
-    clearTimeout(timeout);
-  }
+  const request = (async () => {
+    try {
+      const response = await fetch(withQuery(endpoint, params), {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+        redirect: "follow"
+      });
+      const value = await parseResponse(response);
+      if (cacheable && ttl > 0) responseCache.set(key,{value,expiresAt:Date.now()+ttl});
+      else if (!cacheable) clearApiCache(endpoint);
+      return value;
+    } finally {
+      clearTimeout(timeout);
+      pendingRequests.delete(key);
+    }
+  })();
+  if (cacheable) pendingRequests.set(key,request);
+  return request;
 }
 
 export async function apiPost(endpoint, payload, options = {}) {
@@ -71,7 +110,9 @@ export async function apiPost(endpoint, payload, options = {}) {
       signal: controller.signal,
       redirect: "follow"
     });
-    return await parseResponse(response);
+    const value = await parseResponse(response);
+    clearApiCache(endpoint);
+    return value;
   } finally {
     clearTimeout(timeout);
   }
