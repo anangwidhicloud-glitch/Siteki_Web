@@ -5,18 +5,53 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test --test-isolation=none",
     "build": "vite build",
     "preview": "vite preview",
-    "check:connections": "node scripts/check-connections.mjs"
+    "worker:dev": "wrangler dev",
+    "worker:check": "wrangler deploy --dry-run",
+    "worker:smoke": "node scripts/smoke-neon-api.mjs",
+    "worker:deploy": "wrangler deploy",
+    "worker:verify": "node scripts/verify-oil-worker.mjs",
+    "backup:verify": "node scripts/verify-backup.mjs",
+    "check:connections": "node scripts/check-connections.mjs",
+    "db:migrate": "node scripts/migrate-neon.mjs",
+    "db:import:master": "node scripts/import-machine-users.mjs",
+    "db:verify:master": "node scripts/verify-master-data.mjs",
+    "db:import:inventory": "node scripts/import-parts-stock.mjs",
+    "db:verify:inventory": "node scripts/verify-inventory.mjs",
+    "db:import:reports": "node scripts/import-work-reports.mjs",
+    "db:verify:reports": "node scripts/verify-report-kpi.mjs",
+    "db:import:maintenance": "node scripts/import-maintenance.mjs",
+    "db:verify:maintenance": "node scripts/verify-maintenance-kpi.mjs",
+    "db:import:overtime": "node scripts/import-overtime.mjs",
+    "db:verify:overtime": "node scripts/verify-overtime.mjs",
+    "db:import:electricity": "node scripts/import-electricity.mjs",
+    "db:verify:electricity": "node scripts/verify-electricity.mjs",
+    "db:import:stang": "node scripts/import-stang.mjs",
+    "db:verify:stang": "node scripts/verify-stang.mjs",
+    "db:import:work-orders": "node scripts/import-work-orders.mjs",
+    "db:verify:work-orders": "node scripts/verify-work-orders.mjs",
+    "db:import:welding-transformers": "node scripts/import-transformers.mjs",
+    "db:verify:welding-transformers": "node scripts/verify-transformers.mjs",
+    "db:import:oil": "node scripts/import-oil-monitoring.mjs",
+    "db:verify:oil": "node scripts/verify-oil-monitoring.mjs",
+    "db:verify:all": "node scripts/verify-all-migrations.mjs"
   },
   "dependencies": {
-    "firebase": "^12.16.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "bcryptjs": "^3.0.3",
+    "csv-parse": "^7.0.2",
+    "exceljs": "^4.4.0",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.468.0",
+    "pg": "^8.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wrangler": "^4.118.0"
   }
 }

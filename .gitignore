@@ -2,3 +2,10 @@ node_modules/
 dist/
 .vite/
 *.log
+.env
+.env.*
+!.env.example
+!.env.production.example
+deployment-backups/
+.deploy-backups/
+siteki-infinityfree-*.zip

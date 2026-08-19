@@ -9,9 +9,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          react: ["react", "react-dom"],
-          firebase: ["firebase/app", "firebase/firestore"],
-          icons: ["lucide-react"]
+          react: ["react", "react-dom"]
         }
       }
     }

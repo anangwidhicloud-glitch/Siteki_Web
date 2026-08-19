@@ -313,6 +313,7 @@ function getAllOrders_(params) {
     result.push({
       rowIndex: i + 1,
       tanggal: formatDateTime_(row[0]),
+      tanggal_order: formatCompactDateTime_(row[0]),
       bagianOrder: clean_(row[1]),
       namaOrder: clean_(row[2]),
       bagianTujuan: clean_(row[3]),
@@ -322,7 +323,13 @@ function getAllOrders_(params) {
       jenisPekerjaan: clean_(row[7]),
       kerusakan: clean_(row[8]),
       urgensi: clean_(row[9]),
+      perbaikanDilakukan: clean_(row[10]),
+      jamMulai: formatCompactDateTime_(row[11]),
+      jamSelesai: formatCompactDateTime_(row[12]),
+      statusMesin: clean_(row[13]),
+      totalJam: Number(row[14] || 0),
       status: status,
+      nilaiPerbaikan: clean_(row[16]),
     });
   }
   return json_(result);

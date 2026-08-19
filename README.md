@@ -1,8 +1,10 @@
 # SiTeki Web
 
-Versi web responsif dari aplikasi Android SiTeki. Navigasi, pembagian role, urutan alur layar, Firestore, dan Google Apps Script memakai sumber data yang sama dengan Android.
+Dashboard engineering SiTeki berbasis React/Vite. Runtime produksi menggunakan satu sumber data utama: Neon PostgreSQL melalui Cloudflare Worker `siteki-neon-api`.
 
-## Menjalankan
+Google Spreadsheet dan Firestore tidak digunakan lagi oleh frontend maupun API produksi. Folder `google-apps-script/` dan script `import-*.mjs` dipertahankan hanya sebagai arsip serta alat migrasi historis.
+
+## Menjalankan frontend
 
 ```bash
 npm install
@@ -15,26 +17,58 @@ Build produksi:
 npm run build
 ```
 
-Login menggunakan API Google Apps Script yang sama dengan Android. Tidak ada bypass login; role pengguna selalu berasal dari respons database.
+Alamat API ditentukan oleh:
 
-## Sumber data
+```env
+VITE_API_URL="https://siteki-neon-api.siteki.workers.dev"
+```
 
-- Firestore `master_mesin` dan `master_part`
-- Spreadsheet order kerja dan penyelesaian
-- Spreadsheet laporan kerja
-- Spreadsheet perawatan dan master perawatan
-- Spreadsheet listrik
-- Spreadsheet stok part dan daftar bon
-- Spreadsheet pengguna
-- Spreadsheet trafo dan inspeksi
-- Spreadsheet lembur dan rekap
-- Spreadsheet stang
-- Spreadsheet KPI dan downtime
+`DATABASE_URL` tidak boleh menggunakan awalan `VITE_` dan tidak boleh dimasukkan ke frontend.
 
-Tidak ada mode data contoh. Jika backend tidak dapat dijangkau, halaman menampilkan status koneksi dan tombol coba lagi.
+## Database Neon
 
-Untuk memeriksa seluruh koneksi baca:
+Terapkan seluruh migration:
+
+```bash
+npm run db:migrate
+```
+
+Verifikasi data historis Spreadsheet-versus-Neon:
+
+```bash
+npm run db:verify:all
+```
+
+Verifier tersebut hanya digunakan selama masa rekonsiliasi. Setelah Spreadsheet diarsipkan, pemeriksaan runtime memakai:
+
+```bash
+npm run worker:smoke
+```
+
+## API Neon
+
+Validasi bundle Worker tanpa deployment:
+
+```bash
+npm run worker:check
+```
+
+Secret database harus disimpan pada Cloudflare, bukan di repository:
+
+```bash
+npx wrangler secret put DATABASE_URL
+```
+
+Deployment:
+
+```bash
+npm run worker:deploy
+```
+
+Setelah deployment, periksa seluruh koneksi remote:
 
 ```bash
 npm run check:connections
 ```
+
+Rincian cutover dan rollback tersedia di `docs/NEON_CUTOVER.md`.

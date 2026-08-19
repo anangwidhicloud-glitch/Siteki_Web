@@ -1,21 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
   Activity, AlertTriangle, AppWindow, ArrowLeft, ArrowRight, BarChart3, Bell,
-  BookOpen, Boxes, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck,
-  ClipboardList, Clock3, Database, Download, Edit3, Eye, FileBarChart,
-  FilePlus2, Gauge, HardHat, History, Home, LogOut, Menu, MoreHorizontal, Package,
-  Moon, Plus, QrCode, Search, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Sun,
-  TimerReset, Trash2, Users, Warehouse, Wrench, X, Zap
+  BookOpen, Boxes, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, ClipboardCheck,
+  ClipboardList, Clock3, Database, Download, Droplets, Edit3, Eye, FileBarChart,
+  FilePlus2, Gauge, HardHat, History, Home, LogOut, Menu, MoreHorizontal, Package, Printer,
+  Maximize2, Minimize2, Monitor, Moon, Plus, QrCode, RefreshCw, Search, Settings,
+  ShieldCheck, SlidersHorizontal, Sparkles, Sun, TimerReset, Trash2, TrendingDown,
+  TrendingUp, Users, Warehouse, Wrench, X, Zap
 } from "lucide-react";
 import "./styles.css";
 import { apiGet, apiPost, asArray, ENDPOINTS, isSuccess } from "./lib/api";
-import { getFirestoreCollection, invalidateFirestoreCollection } from "./lib/firebase";
+import { calculateElectricityAssessment } from "./lib/electricity";
 import { useRemoteData } from "./hooks/useRemoteData";
+import { getOilMonitoring, saveOilCheck } from "./lib/oilApi";
+import { MaintenanceKpiPanel } from "./components/MaintenanceKpiPanel";
+import { CosPhiCamera } from "./components/CosPhiCamera";
+import {
+  MAINTENANCE_PRINT_MONTHS, conditionSummary, downloadMaintenanceChecklistPdf,
+  maintenancePrintOptions, normalizeMaintenancePrintRows,
+} from "./lib/maintenanceChecklistPdf";
 
 const normalizeOrder = (o, index = 0) => ({
   ...o,
-  rowIndex: Number(o.rowIndex ?? o.row ?? index + 2),
+  rowIndex: o.rowIndex ?? o.row ?? index + 2,
   tanggal: o.tanggal || "",
   namaMesin: o.namaMesin || o.mesin || "",
   kerusakan: o.kerusakan || o.keluhan || "",
@@ -35,37 +44,8 @@ const toIdDate = (value) => {
   return `${day}/${month}/${year}`;
 };
 
-async function firestoreOrFallback(collectionName, fallbackLoader) {
-  try {
-    const firestoreRows = await Promise.race([
-      getFirestoreCollection(collectionName),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore timeout")), 8000))
-    ]);
-    if (Array.isArray(firestoreRows) && firestoreRows.length) return firestoreRows;
-  } catch {
-    // Login SiTeki menggunakan token Apps Script, bukan Firebase Auth.
-    // Karena itu master data publik dibaca dari API aplikasi bila rules Firestore menolak.
-  }
-  return fallbackLoader();
-}
-
 async function loadMachineMaster() {
-  let sourceRows=[];
-  let firestoreError;
-  try {
-    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error("Firestore timeout")),8000));
-    const firestoreRows=await Promise.race([getFirestoreCollection("master_mesin"),timeout]);
-    if (Array.isArray(firestoreRows)&&firestoreRows.length) sourceRows=firestoreRows;
-  } catch(error) {
-    firestoreError=error;
-  }
-  if (!sourceRows.length) {
-    try {
-      sourceRows=asArray(await apiGet(ENDPOINTS.maintenanceMaster,{action:"getRawatMaster"}));
-    } catch(error) {
-      throw error instanceof Error?error:firestoreError||new Error("Master mesin tidak tersedia.");
-    }
-  }
+  const sourceRows=asArray(await apiGet(ENDPOINTS.maintenanceMaster,{action:"getRawatMaster"}));
   const read=(item,keys)=>{
     for (const key of keys) {
       const value=item?.[key];
@@ -85,13 +65,14 @@ async function loadMachineMaster() {
     unique.set(key,item);
   });
   if (!unique.size) {
-    throw firestoreError instanceof Error?firestoreError:new Error("Master mesin tidak tersedia.");
+    throw new Error("Master mesin tidak tersedia.");
   }
   return [...unique.values()];
 }
 
 const pageMeta = {
   dashboard: ["Dashboard", "Ringkasan operasional teknik hari ini"],
+  monitoringWall: ["Monitoring Layar", "Tampilan operasional untuk monitor dinding"],
   orders: ["Order Kerja", "Daftar dan status pekerjaan perbaikan"],
   orderDetail: ["Detail Order", "Informasi lengkap permintaan perbaikan"],
   finishOrder: ["Penyelesaian Order", "Catat tindakan dan hasil perbaikan"],
@@ -99,11 +80,14 @@ const pageMeta = {
   maintenance: ["Perawatan", "Monitoring jadwal dan aktual perawatan"],
   schedule: ["Jadwal Perawatan", "Kalender preventive maintenance"],
   maintenanceForm: ["Isi Perawatan", "Rekam hasil aktivitas perawatan"],
+  maintenancePrint: ["Cetak Perawatan", "Pilih dua checklist dalam satu kategori dan unduh sebagai PDF"],
   kpi: ["KPI Teknik", "Kinerja, pencapaian, dan downtime"],
+  kpiFull: ["KPI Maintenance", "MTTR, MTBF, status, prioritas, dan repeat failure"],
   kpiMaintenance: ["Detail KPI Perawatan", "Analisis kepatuhan preventive maintenance"],
   kpiDowntime: ["Detail Downtime", "Analisis durasi dan sumber gangguan"],
   electricity: ["Pengecekan Listrik", "Input pemeriksaan energi dan panel"],
   electricityData: ["Data Listrik", "Riwayat hasil pemeriksaan kelistrikan"],
+  oil: ["Cek Oli", "Monitoring level dan volume oli mesin"],
   jobs: ["Laporan Kerja", "Riwayat aktivitas tim teknik"],
   jobForm: ["Isi Laporan", "Dokumentasikan pekerjaan teknisi"],
   stock: ["Stok Part", "Ketersediaan komponen dan material"],
@@ -112,9 +96,9 @@ const pageMeta = {
   stang: ["Logistik Stang", "Sirkulasi stang dan perlengkapan produksi"],
   more: ["Menu Lainnya", "Sub-sistem pendukung SiTeki"],
   catalog: ["Katalog", "Referensi komponen teknik"],
-  transformer: ["Inspeksi Trafo", "Pemeriksaan dan database transformator"],
-  transformerForm: ["Isi Inspeksi Trafo", "Rekam kondisi transformator"],
-  transformerData: ["Data Trafo", "Master aset dan hasil inspeksi"],
+  transformer: ["Inspeksi Trafo Las", "Pemeriksaan dan database trafo las"],
+  transformerForm: ["Isi Inspeksi Trafo Las", "Rekam kondisi trafo las"],
+  transformerData: ["Data Trafo Las", "Master aset transformator las"],
   overtime: ["Lemburan", "Pengajuan serta riwayat kerja lembur"],
   overtimeRecap: ["Rekap Lembur", "Ringkasan upah lembur seluruh pengguna"],
   users: ["Manajemen Teknisi", "Sinkronisasi akses dan profil pengguna"],
@@ -125,10 +109,13 @@ const pageMeta = {
 const navItems = [
   ["dashboard", "Beranda", Home],
   ["maintenance", "Perawatan", Wrench],
+  ["oil", "Cek Oli", Droplets, ["Admin", "Teknik"]],
+  ["electricity", "Listrik", Zap, ["Admin", "Teknik"]],
   ["orders", "Order Kerja", ClipboardList],
   ["jobs", "Laporan Kerja", FileBarChart],
   ["stock", "Stok Part", Boxes],
   ["kpi", "KPI", BarChart3],
+  ["kpiFull", "KPI Lengkap", Gauge, ["Admin", "Teknik"]],
   ["users", "Teknisi", Users, ["Admin"]],
   ["transformer", "Trafo", Zap],
   ["overtime", "Lemburan", Clock3],
@@ -138,8 +125,8 @@ const navItems = [
 ];
 
 const categoryAccess = {
-  Admin: ["maintenance", "jobs", "kpi", "electricity", "stang", "orders", "stock", "more"],
-  Teknik: ["maintenance", "jobs", "kpi", "electricity", "stang", "orders", "stock", "more"],
+  Admin: ["maintenance", "oil", "jobs", "kpi", "electricity", "stang", "orders", "stock", "more"],
+  Teknik: ["maintenance", "oil", "jobs", "kpi", "electricity", "stang", "orders", "stock", "more"],
   Gudang: ["kpi", "stang", "stock", "more"],
   Operator: ["kpi", "orders", "more"]
 };
@@ -153,6 +140,24 @@ function publicOrderRequest() {
   };
 }
 
+const ELECTRICITY_QR_MODES=["pln","panel_1","panel_2","panel_3","panel_4"];
+const ELECTRICITY_PANELS=[
+  {code:"panel_1",name:"Panel 1"},{code:"panel_2",name:"Panel 2"},
+  {code:"panel_3",name:"Panel 3"},{code:"panel_4",name:"Panel 4"},
+];
+const ELECTRICITY_OFFICER_NAMES=["Dody Kumala","Herwidodo","Irham Abdurahman","M. Rizal Adi P."];
+const REPORTING_SECTIONS=["Tek. Shift A","Tek. Shift B","Bengkel","Konstruksi"];
+function electricityQrRequest(value=window.location.href) {
+  try {
+    const url=new URL(value,window.location.origin);
+    const mode=String(url.searchParams.get("listrik")||"").toLowerCase();
+    return {mode:ELECTRICITY_QR_MODES.includes(mode)?mode:""};
+  } catch {
+    const mode=String(value||"").trim().toLowerCase();
+    return {mode:ELECTRICITY_QR_MODES.includes(mode)?mode:""};
+  }
+}
+
 function App() {
   const [session, setSession] = useState(() => {
     try {
@@ -161,9 +166,9 @@ function App() {
       return null;
     }
   });
-  const [page, setPage] = useState("dashboard");
-  const [history, setHistory] = useState([]);
-  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [initialElectricityMode]=useState(()=>electricityQrRequest().mode);
+  const [page, setPage] = useState(()=>initialElectricityMode?"electricity":"dashboard");
+  const [selectedOrder, setSelectedOrder] = useState(()=>initialElectricityMode?{electricityMode:initialElectricityMode,fromQr:true}:null);
   const [toast, setToast] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [themeMode,setThemeMode]=useState(()=>{
@@ -185,26 +190,66 @@ function App() {
   }, [toast]);
   const publicOrder=useMemo(publicOrderRequest,[]);
 
+  useEffect(()=>{
+    if (publicOrder.active) return undefined;
+    const currentState=window.history.state||{};
+    window.history.replaceState({
+      ...currentState,
+      sitekiNavigation:true,
+      sitekiDepth:Number(currentState.sitekiDepth)||0,
+      page,
+      selectedOrder
+    },"");
+    const handleBrowserBack=event=>{
+      const navigation=event.state;
+      if (!navigation?.sitekiNavigation||!pageMeta[navigation.page]) return;
+      setPage(navigation.page);
+      setSelectedOrder(navigation.selectedOrder||null);
+      setSidebarOpen(false);
+      window.scrollTo({top:0,behavior:"auto"});
+    };
+    window.addEventListener("popstate",handleBrowserBack);
+    return ()=>window.removeEventListener("popstate",handleBrowserBack);
+  },[publicOrder.active]);
+
   const go = (target, data) => {
-    setHistory((old) => [...old, page]);
-    if (data) setSelectedOrder(data);
-    else if (target === "createOrder") setSelectedOrder(null);
+    if (target===page&&!data) {
+      setSidebarOpen(false);
+      window.scrollTo({top:0,behavior:"smooth"});
+      return;
+    }
+    const nextSelectedOrder=data||(["createOrder","electricity"].includes(target)?null:selectedOrder);
+    const currentDepth=Number(window.history.state?.sitekiDepth)||0;
+    window.history.pushState({
+      sitekiNavigation:true,
+      sitekiDepth:currentDepth+1,
+      page:target,
+      selectedOrder:nextSelectedOrder
+    },"");
+    setSelectedOrder(nextSelectedOrder);
     setPage(target);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const back = () => {
-    setHistory((old) => {
-      const copy = [...old];
-      setPage(copy.pop() || "dashboard");
-      return copy;
-    });
+    const navigation=window.history.state;
+    if (navigation?.sitekiNavigation&&Number(navigation.sitekiDepth)>0) {
+      window.history.back();
+      return;
+    }
+    window.history.replaceState({sitekiNavigation:true,sitekiDepth:0,page:"dashboard",selectedOrder:null},"");
+    setSelectedOrder(null);
+    setPage("dashboard");
+    setSidebarOpen(false);
+    window.scrollTo({top:0,behavior:"auto"});
   };
   const logout = () => {
+    apiPost(ENDPOINTS.users,{action:"logout",token:session?.token||""},{timeout:5000}).catch(()=>{});
     sessionStorage.removeItem("siteki-session");
     setSession(null);
     setPage("dashboard");
-    setHistory([]);
+    setSelectedOrder(null);
+    window.history.replaceState({sitekiNavigation:true,sitekiDepth:0,page:"dashboard",selectedOrder:null},"");
   };
 
   if (publicOrder.active) return <PublicWorkOrder initialMachine={publicOrder.machine}/>;
@@ -214,11 +259,13 @@ function App() {
     setSession(user);
   }} />;
 
+  if (page === "monitoringWall") return <MonitoringWall session={session} onExit={back}/>;
+
   return (
     <div className="app-shell">
       <Sidebar page={page} role={session.role} open={sidebarOpen} onClose={() => setSidebarOpen(false)} go={go} logout={logout} />
       <main className="main">
-        <Topbar session={session} page={page} onMenu={() => setSidebarOpen(true)} go={go} logout={logout} />
+        <Topbar session={session} page={page} onMenu={() => setSidebarOpen(true)} go={go} logout={logout} notify={setToast} />
         <div className="page">
           {page !== "dashboard" && <button className="back-link" onClick={back}><ArrowLeft size={17} /> Kembali</button>}
           <PageHeader page={page} />
@@ -311,7 +358,7 @@ function Sidebar({ page, role, open, onClose, go, logout }) {
       <div className="brand"><div className="brand-mark"><span>ST</span></div><div><b>SiTeki</b><small>Engineering System</small></div><button className="close-side" onClick={onClose}><X /></button></div>
       <nav>
         <p className="nav-label">Workspace</p>
-        {visibleNavItems.map(([id, label, Icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => go(id)}><Icon size={19} /><span>{label}</span>{id === "orders" && <i>3</i>}</button>)}
+        {visibleNavItems.map(([id, label, Icon]) => <button key={id} className={page === id ? "active" : ""} onClick={() => go(id)}><Icon size={19} /><span>{label}</span></button>)}
       </nav>
       <div className="sidebar-bottom">
         <div className="role-chip"><ShieldCheck size={16} /><span>Akses {role}</span></div>
@@ -321,13 +368,13 @@ function Sidebar({ page, role, open, onClose, go, logout }) {
   </>;
 }
 
-function Topbar({ session, page, onMenu, go, logout }) {
+function Topbar({ session, page, onMenu, go, logout, notify }) {
   return <header className="topbar">
     <button className="menu-toggle" onClick={onMenu}><Menu /></button>
     <div className="crumb"><span>SiTeki</span><b>/</b><strong>{pageMeta[page]?.[0] || "Workspace"}</strong></div>
     <div className="top-actions">
       <button className="icon-button" onClick={() => go("scanner")}><QrCode size={19} /></button>
-      <button className="icon-button notification"><Bell size={19} /><i /></button>
+      <button className="icon-button notification" onClick={()=>notify("Belum ada notifikasi baru.")} title="Notifikasi"><Bell size={19} /></button>
       <div className="user-menu">
         <div className="avatar">{session.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}</div>
         <div><b>{session.name}</b><small>{session.role}</small></div>
@@ -359,12 +406,19 @@ function PageRouter({ page, go, session, selectedOrder, notify, themeMode, setTh
     case "createOrder": return <WorkOrderForm {...props} initialMachine={selectedOrder?.fromScanner ? selectedOrder.namaMesin : ""} />;
     case "maintenance": return <Maintenance {...props} />;
     case "schedule": return <Schedule {...props} />;
-    case "maintenanceForm": return <MaintenanceForm {...props} />;
+    case "maintenanceForm": return <MaintenanceForm {...props} selectedOrder={selectedOrder} />;
+    case "maintenancePrint": return <MaintenancePrint {...props} />;
     case "kpi": return <KPI {...props} />;
+    case "kpiFull": return ["Admin", "Teknik"].includes(session.role)
+      ? <MaintenanceKpiPage />
+      : <SecurityLocked title="KPI maintenance hanya untuk Admin dan Teknik" />;
     case "kpiMaintenance": return <KPIDetail {...props} kind="Perawatan" />;
     case "kpiDowntime": return <KPIDetail {...props} kind="Downtime" />;
-    case "electricity": return <Electricity {...props} />;
-    case "electricityData": return <DataTablePage {...props} kind="listrik" />;
+    case "electricity": return <Electricity {...props} selectedOrder={selectedOrder} />;
+    case "electricityData": return <ElectricityDataPage {...props} />;
+    case "oil": return ["Admin", "Teknik"].includes(session.role)
+      ? <OilMonitoring {...props} />
+      : <SecurityLocked title="Menu cek oli hanya untuk Admin dan Teknik" />;
     case "jobs": return <Jobs {...props} />;
     case "jobForm": return <JobForm {...props} />;
     case "stock": return <Stock {...props} />;
@@ -380,13 +434,16 @@ function PageRouter({ page, go, session, selectedOrder, notify, themeMode, setTh
     case "catalog": return <Catalog />;
     case "stang": return <Stang {...props} />;
     case "scanner": return <Scanner {...props} />;
-    case "settings": return <SettingsPage notify={notify} themeMode={themeMode} onThemeChange={setThemeMode} />;
+    case "settings": return <SettingsPage notify={notify} themeMode={themeMode} onThemeChange={setThemeMode} session={session} />;
     default: return <Dashboard {...props} />;
   }
 }
 
 function Dashboard({ go, session }) {
   const canViewOvertimeChart=["admin","teknik"].includes(String(session.role||"").toLowerCase());
+  const today=new Date();
+  const currentPeriodEnd=today.getMonth()+1;
+  const currentYear=today.getFullYear();
   const ordersRemote = useRemoteData(async () =>
     asArray(await apiGet(ENDPOINTS.dashboardOrders, { action: "getAllOrders" }))
       .map(normalizeOrder)
@@ -399,12 +456,23 @@ function Dashboard({ go, session }) {
   const kpiCombinedRemote = useRemoteData(async () =>
     asArray(await apiGet(ENDPOINTS.kpiCombined), ["rekap"])
   );
+  const dailyKpiRemote=useRemoteData(async()=>{
+    const result=await apiGet(ENDPOINTS.kpiDaily,{year:currentYear});
+    if(!isSuccess(result))throw new Error(result.message||"KPI harian tidak dapat dimuat.");
+    return result.data||{};
+  },[currentYear]);
   const overtimeSummaryRemote = useRemoteData(async () => {
     if (!canViewOvertimeChart) return [];
     const result=await apiPost(ENDPOINTS.users,{action:"getOvertimeChart",token:session.token,year:new Date().getFullYear()},{timeout:90000});
     if (!isSuccess(result)) throw new Error(result.message||"Grafik lembur tidak dapat diakses.");
-    return asArray(result);
+    return result;
   },[session.token,canViewOvertimeChart]);
+  const monthlyKvarhRemote=useRemoteData(async()=>{
+    const result=await apiGet(ENDPOINTS.electricity,{action:"getMonthlyKvarh",year:currentYear});
+    return asArray(result?.data);
+  },[currentYear]);
+  const electricityChecksRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.electricity,{action:"getData"})));
+  const cosPhiChartRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.electricity,{action:"getPanelData"})));
   const stockRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.stock, { action:"getStokPart", bulan:currentIndonesianMonth() })));
   const activeOrders = ordersRemote.data;
   const actualMaintenance = maintenanceRemote.data;
@@ -412,16 +480,24 @@ function Dashboard({ go, session }) {
     () => buildMaintenanceAgenda(actualMaintenance, new Date()),
     [actualMaintenance]
   );
-  const maintenanceKpi = kpiRemote.data.map(x=>({label:monthName(x.bulan),value:Math.round(Number(x.pencapaian||0)*100)}));
-  const downtimeKpi = kpiCombinedRemote.data.map(x=>({label:monthName(x.bulan),value:Number(x.jam||0)}));
-  const orderKpi = kpiCombinedRemote.data.map(x=>({label:monthName(x.bulan),value:Number(x.order||0)}));
-  const overtimeKpi = overtimeSummaryRemote.data.map(x=>({label:monthName(x.bulan),value:Number(x.totalJam||0)}));
+  const yearToDateLabel=`Jan–${new Intl.DateTimeFormat("id-ID",{month:"short"}).format(today)} ${currentYear}`;
+  const maintenanceKpi = trimChartSeries(kpiRemote.data
+    .map(x=>({label:monthName(x.bulan),value:Math.round(Number(x.pencapaian||0)*100)}))
+    .slice(0,currentPeriodEnd));
+  const downtimeKpi = trimChartSeries(kpiCombinedRemote.data
+    .map(x=>({label:monthName(x.bulan),value:Number(x.jam||0)}))
+    .slice(0,currentPeriodEnd));
+  const orderKpi = trimChartSeries(kpiCombinedRemote.data
+    .map(x=>({label:monthName(x.bulan),value:Number(x.order||0)}))
+    .slice(0,currentPeriodEnd));
+  const overtimeKpi = trimChartSeries(asArray(overtimeSummaryRemote.data)
+    .map(x=>({label:monthName(x.bulan),value:Number(x.totalJam||0)}))
+    .slice(0,currentPeriodEnd));
   const latestMaintenanceIndex = Math.max(0,maintenanceKpi.findLastIndex(x=>x.value>0));
   const latestCombinedIndex = Math.max(0,kpiCombinedRemote.data.findLastIndex(x=>Number(x.jam||0)>0||Number(x.order||0)>0));
   const health = maintenanceKpi[latestMaintenanceIndex]?.value||0;
   const maintenanceTarget = Math.round(Number(kpiRemote.data[latestMaintenanceIndex]?.target||.8)*100);
   const downtimeTarget = Number(kpiCombinedRemote.data[latestCombinedIndex]?.target||500);
-  const today=new Date();
   const downtimeYearToDate=kpiCombinedRemote.data
     .slice(0,today.getMonth()+1)
     .reduce((total,item)=>total+Number(item.jam||0),0);
@@ -435,6 +511,7 @@ function Dashboard({ go, session }) {
   const access = categoryAccess[session.role] || categoryAccess.Operator;
   const categories = [
     ["maintenance", "Perawatan", Wrench, "Jadwal & aktual", "mint"],
+    ["oil", "Cek Oli", Droplets, "Level & volume", "blue"],
     ["jobs", "Laporan Kerja", FileBarChart, "Aktivitas teknisi", "blue"],
     ["kpi", "KPI", BarChart3, "Performa teknik", "amber"],
     ["electricity", "Listrik", Zap, "Panel & energi", "violet"],
@@ -445,24 +522,35 @@ function Dashboard({ go, session }) {
   ].filter(([id]) => access.includes(id));
   return <>
     <section className="hero-panel">
-      <div><p className="eyebrow">{new Intl.DateTimeFormat("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" }).format(new Date())}</p><h2>Selamat bekerja, {session.name.split(" ")[0]}.</h2><p>Data langsung dari sistem. Ada <b>{activeOrders.length} order terbuka</b> dan <b>{actualMaintenance.length} catatan perawatan</b> pada basis data.</p>
-        <div className="hero-actions"><button className="primary" onClick={() => go("createOrder")}><Plus size={18} /> Buat order</button><button className="secondary" onClick={() => go("schedule")}><CalendarDays size={18} /> Lihat jadwal</button></div>
+      <div className="hero-content"><p className="hero-eyebrow">{new Intl.DateTimeFormat("id-ID", { weekday:"long", day:"numeric", month:"long", year:"numeric" }).format(new Date())}</p><h2>Selamat bekerja, {session.name.split(" ")[0]}.</h2><p className="hero-desc">Data langsung dari sistem. Ada <b>{activeOrders.length} order terbuka</b> dan <b>{actualMaintenance.length} catatan perawatan</b> pada basis data.</p>
+        <div className="hero-actions"><button className="btn-hero btn-primary" onClick={() => go("createOrder")}><Plus size={20} /> Buat order</button><button className="btn-hero btn-secondary" onClick={() => go("schedule")}><CalendarDays size={20} /> Lihat jadwal</button></div>
       </div>
-      <div className="health-orbit"><div><Activity size={28} /><strong>{kpiRemote.loading ? "…" : `${health}%`}</strong><span>KPI perawatan</span></div></div>
+      <div className="health-ring-container">
+        <div className="health-ring ring-1"></div>
+        <div className="health-ring ring-2"></div>
+        <div className="health-ring ring-3"></div>
+        <div className="health-center">
+          <Activity size={32} />
+          <strong>{kpiRemote.loading ? "..." : `${health}%`}</strong>
+          <span>KPI</span>
+        </div>
+      </div>
     </section>
     <div className="stats-grid">
-      <Stat icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading ? "…" : String(activeOrders.length).padStart(2,"0")} detail="Data Spreadsheet" tone="mint" />
-      <Stat icon={TimerReset} label="Downtime tahun ini" value={kpiCombinedRemote.loading ? "…" : `${downtimeYearToDateLabel} jam`} detail={downtimeDateRange} tone="blue" />
-      <Stat icon={Gauge} label="KPI perawatan" value={kpiRemote.loading ? "…" : `${health}%`} detail="Data KPI terbaru" tone="amber" />
-      <Stat icon={Package} label="Stok di bawah 10" value={stockRemote.loading ? "…" : String(lowStock).padStart(2,"0")} detail="Perlu perhatian" tone="violet" />
+      <ModernStatCard icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading ? 0 : activeOrders.length} detail="Data Neon" color="mint" delay={0} />
+      <ModernStatCard icon={TimerReset} label="Downtime YTD" value={kpiCombinedRemote.loading ? 0 : downtimeYearToDate} unit=" jam" detail={downtimeDateRange} color="blue" delay={100} />
+      <ModernStatCard icon={Gauge} label="KPI Perawatan" value={kpiRemote.loading ? 0 : health} unit="%" detail="Data KPI terbaru" color="amber" delay={200} />
+      <ModernStatCard icon={Package} label="Stok Rendah" value={stockRemote.loading ? 0 : lowStock} detail="Perlu perhatian" color="violet" delay={300} />
     </div>
-    <div className="section-title dashboard-kpi-title"><div><p className="eyebrow">Live performance</p><h2>Ringkasan KPI Teknik</h2></div><button className="secondary small" onClick={()=>go("kpi")}>Lihat KPI lengkap <ArrowRight size={15}/></button></div>
+    <div className="section-title dashboard-kpi-title"><div><p className="eyebrow">Live performance</p><h2>Ringkasan KPI Teknik</h2></div><div className="dashboard-kpi-actions"><button className="secondary small" onClick={()=>go("monitoringWall")}><Monitor size={15}/> Mode monitor</button><button className="secondary small" onClick={()=>go("kpiFull")}>Lihat KPI lengkap <ArrowRight size={15}/></button></div></div>
     <div className="dashboard-kpi-grid">
-      <DashboardKpiChart title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} data={downtimeKpi} target={downtimeTarget} maxValue={1000} unit=" jam" color="#d97706" decimals={1} loading={kpiCombinedRemote.loading} error={kpiCombinedRemote.error} onClick={()=>go("kpiDowntime")}/>
-      <DashboardKpiChart title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} data={maintenanceKpi} target={maintenanceTarget} maxValue={100} unit="%" color="#079b70" loading={kpiRemote.loading} error={kpiRemote.error} onClick={()=>go("kpiMaintenance")}/>
-      <DashboardKpiChart title="Total Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} data={orderKpi} maxValue={350} unit="" color="#7557d9" loading={kpiCombinedRemote.loading} error={kpiCombinedRemote.error} onClick={()=>go("kpi")}/>
-      {canViewOvertimeChart&&<DashboardKpiChart title="Total Jam Lembur" subtitle={`Akumulasi Admin & Teknik · ${new Date().getFullYear()}`} icon={Clock3} data={overtimeKpi} unit=" jam" color="#0f8ea8" decimals={1} loading={overtimeSummaryRemote.loading} error={overtimeSummaryRemote.error}/>}
+      <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" dailySubtitle="Downtime aktual per hari" icon={TimerReset} value={kpiCombinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={yearToDateLabel} data={downtimeKpi} dailyData={asArray(dailyKpiRemote.data?.downtime)} year={currentYear} enablePeriod target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onClick={() => go("kpiDowntime")} />
+      <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" dailySubtitle="Jumlah pemeriksaan aktual per hari" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" dailyUnit="cek" period={`${maintenanceKpi.at(-1)?.label||"-"} ${currentYear}`} data={maintenanceKpi} dailyData={asArray(dailyKpiRemote.data?.maintenance)} year={currentYear} enablePeriod target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onClick={() => go("kpiMaintenance")} />
+      <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" dailySubtitle="Laporan/order tercatat per hari" icon={ClipboardList} value={kpiCombinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label||"-"} ${currentYear}`} data={orderKpi} dailyData={asArray(dailyKpiRemote.data?.orders)} year={currentYear} enablePeriod color="#ec4899" onClick={() => go("kpi")} />
+      {canViewOvertimeChart && <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" dailySubtitle="Jam lembur aktual per hari" icon={Clock3} value={overtimeSummaryRemote.loading ? 0 : overtimeKpi.reduce((a, b) => a + b.value, 0)} decimals={1} unit="jam" period={yearToDateLabel} data={overtimeKpi} dailyData={asArray(overtimeSummaryRemote.data?.daily)} year={currentYear} enablePeriod color="#22d3ee" />}
     </div>
+    <MonthlyKvarhCard data={monthlyKvarhRemote.data} rawData={electricityChecksRemote.data} loading={monthlyKvarhRemote.loading} rawLoading={electricityChecksRemote.loading} error={monthlyKvarhRemote.error} rawError={electricityChecksRemote.error} year={currentYear} onRetry={()=>{monthlyKvarhRemote.reload();electricityChecksRemote.reload();}}/>
+    <CosPhiPanelChart data={cosPhiChartRemote.data} loading={cosPhiChartRemote.loading} error={cosPhiChartRemote.error} year={currentYear} onRetry={cosPhiChartRemote.reload}/>
     <div className="section-title"><div><p className="eyebrow">Quick access</p><h2>Kategori kerja</h2></div></div>
     <div className="category-grid">{categories.map(([id, label, Icon, sub, tone]) => <button className="category-card" key={id} onClick={() => go(id)}><span className={`icon-box ${tone}`}><Icon size={23} /></span><b>{label}</b><small>{sub}</small><ArrowRight size={17} /></button>)}</div>
     <div className="dashboard-columns">
@@ -503,8 +591,676 @@ function Dashboard({ go, session }) {
   </>;
 }
 
+function MonitoringWall({session,onExit}) {
+  const canViewOvertimeChart=["admin","teknik"].includes(String(session.role||"").toLowerCase());
+  const [refreshKey,setRefreshKey]=useState(0);
+  const [clock,setClock]=useState(new Date());
+  const [isFullscreen,setIsFullscreen]=useState(Boolean(document.fullscreenElement));
+  const [chartPickerOpen,setChartPickerOpen]=useState(false);
+  const [focusedChart,setFocusedChart]=useState("");
+  const [energySlideIndex,setEnergySlideIndex]=useState(0);
+  const [workSlideIndex,setWorkSlideIndex]=useState(0);
+  const [reportSlideIndex,setReportSlideIndex]=useState(0);
+  const [missingReportIndex,setMissingReportIndex]=useState(0);
+  const [selectedCharts,setSelectedCharts]=useState({kvarh:false,cosphi:false,orders:false,overtime:false,downtime:false,maintenance:false,reports:false,active_orders:false,maintenance_due:false});
+  const visibleCharts={kvarh:true,cosphi:true,orders:true,overtime:true,downtime:true,maintenance:true};
+  const wakeLockRef=useRef(null);
+  const dataVersionRef=useRef(null);
+  const today=clock,currentYear=today.getFullYear(),currentPeriodEnd=today.getMonth()+1;
+  useEffect(()=>{
+    let stopped=false;
+    const clockTimer=window.setInterval(()=>setClock(new Date()),1000);
+    const checkForChanges=async()=>{
+      try{
+        const result=await apiGet(ENDPOINTS.monitoringVersion,{}, {cache:false,timeout:5000});
+        if(stopped)return;
+        const version=Number(result?.version||0);
+        if(dataVersionRef.current===null)dataVersionRef.current=version;
+        else if(version!==dataVersionRef.current){dataVersionRef.current=version;setRefreshKey(key=>key+1);}
+      }catch{/* Tombol refresh manual tetap tersedia ketika pemeriksaan versi terputus. */}
+    };
+    checkForChanges();
+    const versionTimer=window.setInterval(checkForChanges,3000);
+    const fullscreenChange=()=>setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange",fullscreenChange);
+    return()=>{stopped=true;window.clearInterval(clockTimer);window.clearInterval(versionTimer);document.removeEventListener("fullscreenchange",fullscreenChange);wakeLockRef.current?.release?.().catch(()=>{});};
+  },[]);
+  useEffect(()=>{
+    const keepSessionAlive=()=>apiPost(ENDPOINTS.users,{action:"getMyProfile",token:session.token},{timeout:10000}).catch(()=>{});
+    const keepAliveTimer=window.setInterval(keepSessionAlive,4*60*60*1000);
+    return()=>window.clearInterval(keepAliveTimer);
+  },[session.token]);
+  const toggleFullscreen=async()=>{
+    try{
+      if(document.fullscreenElement){await document.exitFullscreen();screen.orientation?.unlock?.();wakeLockRef.current?.release?.().catch(()=>{});wakeLockRef.current=null;}
+      else{await document.documentElement.requestFullscreen();await screen.orientation?.lock?.("landscape")?.catch(()=>{});if(navigator.wakeLock?.request)wakeLockRef.current=await navigator.wakeLock.request("screen");}
+    }catch{/* Browser dapat menolak fullscreen/wake lock; tampilan monitor tetap dapat digunakan. */}
+  };
+  const leave=async()=>{if(document.fullscreenElement)await document.exitFullscreen().catch(()=>{});onExit();};
+  const kpiRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.kpi,{}, {cache:false})),[refreshKey],{silentRefresh:true});
+  const combinedRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.kpiCombined,{}, {cache:false}),["rekap"]),[refreshKey],{silentRefresh:true});
+  const ordersRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.dashboardOrders,{action:"getAllOrders"},{cache:false})).map(normalizeOrder).filter(order=>order.status.toLowerCase()==="open"),[refreshKey],{silentRefresh:true});
+  const maintenanceRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.maintenance,{action:"getPerawatan"},{cache:false})),[refreshKey],{silentRefresh:true});
+  const reportsRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.jobs,{action:"getLaporanKerja",bulan:"",tglAwal:"",tglAkhir:""},{cache:false})),[refreshKey],{silentRefresh:true});
+  const overtimeRemote=useRemoteData(async()=>{
+    if(!canViewOvertimeChart)return[];
+    const result=await apiPost(ENDPOINTS.users,{action:"getOvertimeChart",token:session.token,year:currentYear},{timeout:90000});
+    if(!isSuccess(result))throw new Error(result.message||"Grafik lembur tidak dapat diakses.");
+    return asArray(result);
+  },[refreshKey,session.token,currentYear,canViewOvertimeChart],{silentRefresh:true});
+  const monthlyKvarhRemote=useRemoteData(async()=>{
+    const result=await apiGet(ENDPOINTS.electricity,{action:"getMonthlyKvarh",year:currentYear},{cache:false});return asArray(result?.data);
+  },[refreshKey,currentYear],{silentRefresh:true});
+  const electricityChecksRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.electricity,{action:"getData"},{cache:false})),[refreshKey],{silentRefresh:true});
+  const cosPhiRemote=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.electricity,{action:"getPanelData"},{cache:false})),[refreshKey],{silentRefresh:true});
+  const maintenanceKpi=trimChartSeries(kpiRemote.data.map(item=>({label:monthName(item.bulan),value:Math.round(Number(item.pencapaian||0)*100)})).slice(0,currentPeriodEnd));
+  const downtimeKpi=trimChartSeries(combinedRemote.data.map(item=>({label:monthName(item.bulan),value:Number(item.jam||0)})).slice(0,currentPeriodEnd));
+  const orderKpi=trimChartSeries(combinedRemote.data.map(item=>({label:monthName(item.bulan),value:Number(item.order||0)})).slice(0,currentPeriodEnd));
+  const overtimeKpi=trimChartSeries(overtimeRemote.data.map(item=>({label:monthName(item.bulan),value:Number(item.totalJam||0)})).slice(0,currentPeriodEnd));
+  const latestMaintenanceIndex=Math.max(0,maintenanceKpi.findLastIndex(item=>item.value>0));
+  const latestCombinedIndex=Math.max(0,combinedRemote.data.findLastIndex(item=>Number(item.jam||0)>0||Number(item.order||0)>0));
+  const health=maintenanceKpi[latestMaintenanceIndex]?.value||0;
+  const maintenanceTarget=Math.round(Number(kpiRemote.data[latestMaintenanceIndex]?.target||.8)*100);
+  const downtimeTarget=Number(combinedRemote.data[latestCombinedIndex]?.target||500);
+  const downtimeYearToDate=combinedRemote.data.slice(0,currentPeriodEnd).reduce((total,item)=>total+Number(item.jam||0),0);
+  const maintenanceAgenda=useMemo(()=>buildMaintenanceAgenda(maintenanceRemote.data,today),[maintenanceRemote.data,today.getFullYear(),today.getMonth(),today.getDate()]);
+  const periodLabel=`Jan–${new Intl.DateTimeFormat("id-ID",{month:"short"}).format(today)} ${currentYear}`;
+  const refresh=()=>setRefreshKey(key=>key+1);
+  const kvarhMiniData=monthlyKvarhRemote.data.filter(item=>Number(item.checkCount)>0).map(item=>({label:item.label,value:Number(item.reactiveKvarh)||0}));
+  const latestKvarh=kvarhMiniData.at(-1)?.value||0;
+  const cosPhiMonthlyLatest=new Map();
+  asArray(cosPhiRemote.data).forEach(item=>{
+    const match=String(item.tanggal||"").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const month=Number(match?.[2]),itemYear=Number(match?.[3]),value=Number(item.cos_phi);
+    if(itemYear!==currentYear||month<1||month>12||!Number.isFinite(value))return;
+    const key=`${item.code}-${month}`;
+    if(!cosPhiMonthlyLatest.has(key))cosPhiMonthlyLatest.set(key,value);
+  });
+  const cosPhiMiniData=Array.from({length:currentPeriodEnd},(_,index)=>{
+    const values=["panel_1","panel_2","panel_3","panel_4"].map(code=>cosPhiMonthlyLatest.get(`${code}-${index+1}`)).filter(Number.isFinite);
+    return values.length?{label:SCHEDULE_MONTHS[index].slice(0,3),value:Math.min(...values)}:null;
+  }).filter(Boolean);
+  const latestCosPhi=cosPhiMiniData.at(-1)?.value||0;
+  const latestReportDate=reportsRemote.data[0]?.tanggal||"";
+  const latestReports=reportsRemote.data.filter(report=>report.tanggal===latestReportDate);
+  const reportedSections=new Set(latestReports.map(report=>{
+    const section=String(report.bagian||"").trim();
+    if(section==="Teknik A")return "Tek. Shift A";
+    if(section==="Teknik B")return "Tek. Shift B";
+    return section;
+  }));
+  const missingReportSections=REPORTING_SECTIONS.filter(section=>!reportedSections.has(section));
+  const missingReportSection=missingReportSections[missingReportIndex%Math.max(1,missingReportSections.length)]||"Semua sudah melapor";
+  const chartOptions=[
+    ["kvarh","Energi Reaktif PLN"],["cosphi","Faktor Daya"],["orders","Order Kerja"],
+    ["overtime","Jam Lembur"],["downtime","Downtime"],["maintenance","Perawatan"],
+    ["reports","Tabel Laporan Kerja"],["active_orders","Tabel Order Aktif"],["maintenance_due","Tabel Belum Dirawat"],
+  ].filter(([id])=>id!=="overtime"||canViewOvertimeChart);
+  const toggleChart=id=>setSelectedCharts(current=>({...current,[id]:!current[id]}));
+  const focusedContent={
+    kvarh:<MonthlyKvarhCard data={monthlyKvarhRemote.data} rawData={electricityChecksRemote.data} loading={monthlyKvarhRemote.loading} rawLoading={electricityChecksRemote.loading} error={monthlyKvarhRemote.error} rawError={electricityChecksRemote.error} year={currentYear} onRetry={refresh}/>,
+    cosphi:<CosPhiPanelChart data={cosPhiRemote.data} loading={cosPhiRemote.loading} error={cosPhiRemote.error} year={currentYear} onRetry={refresh}/>,
+    downtime:<ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} value={combinedRemote.loading?0:downtimeYearToDate} decimals={1} unit="jam" period={periodLabel} data={downtimeKpi} target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c"/>,
+    maintenance:<ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} value={kpiRemote.loading?0:health} unit="%" period={`${maintenanceKpi.at(-1)?.label||"-"} ${currentYear}`} data={maintenanceKpi} target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e"/>,
+    orders:<ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} value={combinedRemote.loading?0:orderKpi.at(-1)?.value||0} unit="WO" period={`${orderKpi.at(-1)?.label||"-"} ${currentYear}`} data={orderKpi} color="#ec4899"/>,
+    overtime:<ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" icon={Clock3} value={overtimeRemote.loading?0:overtimeKpi.reduce((total,item)=>total+item.value,0)} decimals={1} unit="jam" period={periodLabel} data={overtimeKpi} color="#22d3ee"/>,
+    reports:<section className="monitoring-selected-table"><div className="monitoring-selected-table-head"><div><p className="eyebrow">Tanggal data terbaru</p><h2>Laporan kerja {latestReportDate||"-"}</h2></div><span>{latestReports.length} laporan</span></div><div className="table-wrap"><table><thead><tr><th>Bagian</th><th>Mesin</th><th>Laporan pekerjaan</th><th>Mulai</th><th>Selesai</th><th>Durasi</th></tr></thead><tbody>{latestReports.map((report,index)=><tr key={report.id||report.rowIndex||index}><td>{report.bagian||"-"}</td><td><b>{report.namaMesin||report.mesin||"-"}</b></td><td>{report.laporan||report.laporanPekerjaan||"-"}</td><td>{report.jamMulai||"-"}</td><td>{report.jamSelesai||"-"}</td><td>{Number(report.totalJam)>0?`${Number(report.totalJam).toLocaleString("id-ID",{maximumFractionDigits:2})} jam`:"-"}</td></tr>)}</tbody></table></div></section>,
+    active_orders:<section className="monitoring-selected-table"><div className="monitoring-selected-table-head"><div><p className="eyebrow">Operasional teknik</p><h2>Seluruh order kerja aktif</h2></div><span>{ordersRemote.data.length} order</span></div><RemoteState loading={ordersRemote.loading} error={ordersRemote.error} empty={!ordersRemote.data.length} onRetry={ordersRemote.reload}/>{!ordersRemote.loading&&!ordersRemote.error&&ordersRemote.data.length>0&&<OrderTable orders={ordersRemote.data} onClick={()=>{}}/>}</section>,
+    maintenance_due:<section className="monitoring-selected-table"><div className="monitoring-selected-table-head"><div><p className="eyebrow">Perawatan tertunda</p><h2>{maintenanceAgenda.title}</h2></div><span>{maintenanceAgenda.items.length} aset</span></div><RemoteState loading={maintenanceRemote.loading} error={maintenanceRemote.error} empty={!maintenanceAgenda.items.length} onRetry={maintenanceRemote.reload}/>{!maintenanceRemote.loading&&!maintenanceRemote.error&&maintenanceAgenda.items.length>0&&<div className="table-wrap"><table><thead><tr><th>Tanggal</th><th>Mesin / aset</th><th>Frekuensi</th><th>Status</th><th>Keterangan</th></tr></thead><tbody>{maintenanceAgenda.items.map((item,index)=><tr key={`${item.name}-${item.date}-${index}`}><td>{item.date||`${String(item.day).padStart(2,"0")}/${String(item.month).padStart(2,"0")}`}</td><td><b>{item.name}</b></td><td>{item.type}</td><td>{maintenanceAgenda.source==="previous-week"?"Tertunda":"Belum dikerjakan"}</td><td>{item.note||"-"}</td></tr>)}</tbody></table></div>}</section>,
+  };
+  const selectedChartIds=chartOptions.map(([id])=>id).filter(id=>selectedCharts[id]);
+  const clearSelectedCharts=()=>setSelectedCharts({kvarh:false,cosphi:false,orders:false,overtime:false,downtime:false,maintenance:false,reports:false,active_orders:false,maintenance_due:false});
+  const showOnlySelection=id=>setSelectedCharts({kvarh:false,cosphi:false,orders:false,overtime:false,downtime:false,maintenance:false,reports:false,active_orders:false,maintenance_due:false,[id]:true});
+  const openTableCard=event=>{
+    if(event.target.closest("button,a,input,select"))return;
+    const card=event.target.closest(".monitoring-latest-reports,.monitoring-orders-panel,.monitoring-agenda-panel");
+    if(!card)return;
+    if(card.classList.contains("monitoring-latest-reports"))showOnlySelection("reports");
+    else if(card.classList.contains("monitoring-orders-panel"))showOnlySelection("active_orders");
+    else showOnlySelection("maintenance_due");
+  };
+  const featuredCount=2;
+  const topChartCards=[
+    {id:"kvarh",node:<ModernKpiCard title="Energi Reaktif PLN" subtitle="Aktual kVArh bulanan" icon={Zap} value={monthlyKvarhRemote.loading?0:latestKvarh} decimals={2} unit="kVArh" period={periodLabel} data={kvarhMiniData} color="#a78bfa" onClick={()=>setFocusedChart("kvarh")}/>},
+    {id:"cosphi",node:<ModernKpiCard title="Faktor Daya" subtitle="Cos φ terendah Panel 1–4" icon={Activity} value={cosPhiRemote.loading?0:latestCosPhi} decimals={2} period={periodLabel} data={cosPhiMiniData} target={.85} targetLabel="Minimum 0,85" color="#22d3ee" onClick={()=>setFocusedChart("cosphi")}/>},
+    {id:"orders",node:<ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} value={combinedRemote.loading?0:orderKpi.at(-1)?.value||0} unit="WO" period={`${orderKpi.at(-1)?.label||"-"} ${currentYear}`} data={orderKpi} color="#ec4899" onClick={()=>setFocusedChart("orders")}/>},
+    canViewOvertimeChart&&{id:"overtime",node:<ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" icon={Clock3} value={overtimeRemote.loading?0:overtimeKpi.reduce((total,item)=>total+item.value,0)} decimals={1} unit="jam" period={periodLabel} data={overtimeKpi} color="#22d3ee" onClick={()=>setFocusedChart("overtime")}/>},
+  ].filter(Boolean);
+  const energyCards=topChartCards.filter(item=>["kvarh","cosphi"].includes(item.id));
+  const workCards=topChartCards.filter(item=>["orders","overtime"].includes(item.id));
+  const activeEnergyCard=energyCards[energySlideIndex%Math.max(1,energyCards.length)];
+  const activeWorkCard=workCards[workSlideIndex%Math.max(1,workCards.length)];
+  const reportsPerSlide=2;
+  const reportSlideCount=Math.max(1,Math.ceil(latestReports.length/reportsPerSlide));
+  const activeReportSlide=reportSlideIndex%reportSlideCount;
+  const visibleLatestReports=latestReports.slice(activeReportSlide*reportsPerSlide,activeReportSlide*reportsPerSlide+reportsPerSlide);
+  useEffect(()=>{
+    if(energyCards.length<=1)return;
+    const timer=window.setInterval(()=>setEnergySlideIndex(index=>(index+1)%energyCards.length),8000);
+    return()=>window.clearInterval(timer);
+  },[energyCards.map(item=>item.id).join("|")]);
+  useEffect(()=>{
+    if(workCards.length<=1)return;
+    const timer=window.setInterval(()=>setWorkSlideIndex(index=>(index+1)%workCards.length),9000);
+    return()=>window.clearInterval(timer);
+  },[workCards.map(item=>item.id).join("|")]);
+  useEffect(()=>{
+    setEnergySlideIndex(0);
+    setWorkSlideIndex(0);
+  },[topChartCards.map(item=>item.id).join("|")]);
+  useEffect(()=>{
+    setReportSlideIndex(0);
+    if(reportSlideCount<=1)return;
+    const timer=window.setInterval(()=>setReportSlideIndex(index=>(index+1)%reportSlideCount),7000);
+    return()=>window.clearInterval(timer);
+  },[latestReportDate,reportSlideCount]);
+  useEffect(()=>{
+    if(missingReportSections.length<=1){setMissingReportIndex(0);return;}
+    const timer=window.setInterval(()=>setMissingReportIndex(index=>(index+1)%missingReportSections.length),4500);
+    return()=>window.clearInterval(timer);
+  },[missingReportSections.join("|")]);
+  return <div className="monitoring-wall">
+    <div className="monitoring-rotate-device"><Monitor size={34}/><b>Putar ponsel ke landscape</b><span>Tampilan monitor tersedia dalam posisi mendatar.</span></div>
+    <header className="monitoring-wall-header">
+      <div className="monitoring-wall-brand"><div className="brand-mark"><span>ST</span></div><div><p className="eyebrow">Live engineering performance</p><h1>SiTeki Monitoring</h1></div></div>
+      <div className="monitoring-wall-clock"><strong>{new Intl.DateTimeFormat("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(clock)}</strong><span>{new Intl.DateTimeFormat("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(clock)}</span></div>
+      <div className="monitoring-wall-actions"><span className="monitoring-auto"><i/> Live saat data berubah</span><div className="monitoring-chart-picker"><button onClick={()=>setChartPickerOpen(open=>!open)}><BarChart3 size={17}/><span>Pilih grafik{selectedChartIds.length?` (${selectedChartIds.length})`:""}</span></button>{chartPickerOpen&&<div className="monitoring-chart-menu"><div><b>Grafik memenuhi layar</b><small>Centang grafik pilihan. Kosongkan semua untuk dashboard lengkap.</small></div>{chartOptions.map(([id,label])=><div className="monitoring-chart-option" key={id}><label title="Pilih grafik untuk layar"><input type="checkbox" checked={Boolean(selectedCharts[id])} onChange={()=>toggleChart(id)}/><Check size={12}/></label><button onClick={()=>{setFocusedChart(id);setChartPickerOpen(false);}}>{label}<Maximize2 size={12}/></button></div>)}{selectedChartIds.length>0&&<button className="monitoring-chart-reset" onClick={()=>setSelectedCharts({kvarh:false,cosphi:false,orders:false,overtime:false,downtime:false,maintenance:false})}><X size={13}/> Dashboard lengkap</button>}</div>}</div><button onClick={refresh} title="Perbarui sekarang"><RefreshCw size={17}/></button><button onClick={toggleFullscreen} title={isFullscreen?"Keluar layar penuh":"Layar penuh"}>{isFullscreen?<Minimize2 size={17}/>:<Maximize2 size={17}/>}<span>{isFullscreen?"Perkecil":"Layar penuh"}</span></button><button className="monitoring-exit" onClick={leave}><X size={17}/><span>Tutup</span></button></div>
+    </header>
+    {selectedChartIds.length>0&&<main className={`monitoring-selected-charts count-${selectedChartIds.length}`}><button className="monitoring-selection-close" onClick={clearSelectedCharts}><X size={16}/> Kembali ke monitor</button>{selectedChartIds.map(id=><section key={id} className={`monitoring-selected-chart selected-${id}`}>{focusedContent[id]}</section>)}</main>}
+    <main className={`monitoring-wall-content ${selectedChartIds.length?"selection-hidden":""}`} onClick={openTableCard}>
+      <section className="monitoring-wall-stats">
+        <ModernStatCard icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading?0:ordersRemote.data.length} color="mint" delay={0}/>
+        <ModernStatCard icon={TimerReset} label="Downtime YTD" value={combinedRemote.loading?0:downtimeYearToDate} unit=" jam" color="blue" delay={50}/>
+        <ModernStatCard icon={Gauge} label="KPI Perawatan" value={kpiRemote.loading?0:health} unit="%" color="amber" delay={100}/>
+        <ModernStatCard key={missingReportSection} icon={ClipboardCheck} label="Belum laporan kerja" displayValue={reportsRemote.loading?"Memuat…":missingReportSection} detail={latestReportDate?`Acuan ${latestReportDate} · ${missingReportSections.length} bagian`:"Belum ada laporan"} color={missingReportSections.length?"rose":"violet"} delay={150} className="missing-report-stat"/>
+      </section>
+      <section className="monitoring-wall-body">
+        <div className="monitoring-wall-chart-column">
+          <section className="monitoring-wall-top-slides">
+            <div className="monitoring-wall-carousel">
+              {activeEnergyCard?<div key={activeEnergyCard.id} className="monitoring-wall-kpis monitoring-carousel-page count-1">{activeEnergyCard.node}</div>:<div className="monitoring-carousel-empty"><BarChart3 size={24}/><b>Pilih kVAr atau cos phi</b></div>}
+              {energyCards.length>1&&<div className="monitoring-carousel-dots" aria-label="Navigasi energi dan faktor daya">{energyCards.map((item,index)=><button key={item.id} className={index===energySlideIndex%energyCards.length?"active":""} onClick={()=>setEnergySlideIndex(index)} aria-label={item.id}/>)}</div>}
+            </div>
+            <div className="monitoring-wall-carousel">
+              {activeWorkCard?<div key={activeWorkCard.id} className="monitoring-wall-kpis monitoring-carousel-page count-1">{activeWorkCard.node}</div>:<div className="monitoring-carousel-empty"><BarChart3 size={24}/><b>Pilih order atau lembur</b></div>}
+              {workCards.length>1&&<div className="monitoring-carousel-dots" aria-label="Navigasi order dan lembur">{workCards.map((item,index)=><button key={item.id} className={index===workSlideIndex%workCards.length?"active":""} onClick={()=>setWorkSlideIndex(index)} aria-label={item.id}/>)}</div>}
+            </div>
+          </section>
+      <section className="monitoring-wall-details">
+        <div className="monitoring-downtime-slot">{visibleCharts.downtime&&<ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} value={combinedRemote.loading?0:downtimeYearToDate} decimals={1} unit="jam" period={periodLabel} data={downtimeKpi} target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onClick={()=>setFocusedChart("downtime")}/>}</div>
+        <div className="monitoring-maintenance-slot">{visibleCharts.maintenance&&<ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} value={kpiRemote.loading?0:health} unit="%" period={`${maintenanceKpi.at(-1)?.label||"-"} ${currentYear}`} data={maintenanceKpi} target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onClick={()=>setFocusedChart("maintenance")}/>}</div>
+        <div className={`monitoring-wall-operations ${featuredCount?"":"full"}`}><section className="monitoring-wall-panel monitoring-orders-panel"><div className="monitoring-panel-head"><h2>Order kerja aktif</h2><span>{ordersRemote.data.length} order terbuka</span></div><RemoteState loading={ordersRemote.loading} error={ordersRemote.error} empty={!ordersRemote.data.length} onRetry={ordersRemote.reload}/>{!ordersRemote.loading&&!ordersRemote.error&&ordersRemote.data.length>0&&<OrderTable orders={ordersRemote.data.slice(0,5)} onClick={()=>{}}/>}</section><section className="monitoring-wall-panel monitoring-agenda-panel"><div className="monitoring-panel-head"><h2>Agenda terdekat</h2><span>{maintenanceAgenda.title}</span></div><RemoteState loading={maintenanceRemote.loading} error={maintenanceRemote.error} onRetry={maintenanceRemote.reload}/>{!maintenanceRemote.loading&&!maintenanceRemote.error&&<><div className={`agenda-context ${maintenanceAgenda.source==="previous-week"?"overdue":""}`}><CalendarDays size={16}/><span><b>{maintenanceAgenda.title}</b><small>{maintenanceAgenda.description}</small></span></div>{maintenanceAgenda.items.length?<div className="agenda">{maintenanceAgenda.items.slice(0,5).map(item=><div className="monitoring-agenda-item" key={`${item.name}-${item.date}`}><span className={`date-box ${maintenanceAgenda.source==="today"?"today":"overdue"}`}><b>{String(item.day).padStart(2,"0")}</b><small>{String(item.month).padStart(2,"0")}</small></span><span><b>{item.name}</b><small><em className={`agenda-type ${item.status==="B"?"monthly":"weekly"}`}>{item.type}</em> · {item.note}</small></span></div>)}</div>:<div className="agenda-empty"><CheckCircle2 size={22}/><b>Tidak ada perawatan tertunda</b><small>Jadwal sudah selesai atau kosong.</small></div>}</>}</section></div>
+      </section>
+        </div>
+        <section className="monitoring-wall-panel monitoring-latest-reports">
+          <div className="monitoring-panel-head"><div><h2>Laporan pekerjaan terakhir</h2><small>Aktivitas pada tanggal data terbaru</small></div><span>{latestReportDate||"Belum ada data"}</span></div>
+          <RemoteState loading={reportsRemote.loading} error={reportsRemote.error} empty={!latestReports.length} onRetry={reportsRemote.reload}/>
+          {!reportsRemote.loading&&!reportsRemote.error&&latestReports.length>0&&<div key={activeReportSlide} className="monitoring-report-list">{visibleLatestReports.map((report,index)=><article key={report.id||report.rowIndex||`${report.tanggal}-${index}`}><span className="monitoring-report-number">{String(activeReportSlide*reportsPerSlide+index+1).padStart(2,"0")}</span><div><b>{report.namaMesin||report.mesin||"Tanpa nama mesin"}</b><p>{report.laporan||report.laporanPekerjaan||"Tanpa uraian pekerjaan"}</p><small>{report.bagian||"Tanpa bagian"}{Number(report.totalJam)>0?` · ${Number(report.totalJam).toLocaleString("id-ID",{maximumFractionDigits:2})} jam`:""}</small></div></article>)}</div>}
+          {reportSlideCount>1&&<div className="monitoring-report-pagination"><span>{activeReportSlide+1}/{reportSlideCount}</span>{Array.from({length:reportSlideCount},(_,index)=><button key={index} className={index===activeReportSlide?"active":""} onClick={()=>setReportSlideIndex(index)} aria-label={`Halaman laporan ${index+1}`}/>)}</div>}
+        </section>
+      </section>
+    </main>
+    {focusedChart&&<div className="monitoring-focus-overlay" role="dialog" aria-modal="true" aria-label={`Grafik ${chartOptions.find(([id])=>id===focusedChart)?.[1]||"monitoring"}`}><div className="monitoring-focus-head"><div><p className="eyebrow">Tampilan fokus</p><h2>{chartOptions.find(([id])=>id===focusedChart)?.[1]}</h2></div><button onClick={()=>setFocusedChart("")}><X size={19}/> Tutup</button></div><div className={`monitoring-focus-content focus-${focusedChart}`}>{focusedContent[focusedChart]}</div></div>}
+  </div>;
+}
+
 function Stat({ icon: Icon, label, value, detail, tone }) {
   return <article className="stat"><span className={`icon-box ${tone}`}><Icon size={21} /></span><div><small>{label}</small><strong>{value}</strong><p><span>↗</span> {detail}</p></div></article>;
+}
+
+/* ============================================
+   ANIMATED COUNTER
+   ============================================ */
+function AnimatedCounter({ value, duration = 1500, decimals = 0 }) {
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    const start = 0;
+    const end = parseFloat(value) || 0;
+    const startTime = Date.now();
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const current = start + (end - start) * easeOut;
+      setDisplay(current);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    requestAnimationFrame(animate);
+  }, [value, duration]);
+
+  return (
+    <span className="animated-counter">
+      {decimals > 0 ? display.toFixed(decimals) : Math.round(display).toLocaleString('id-ID')}
+    </span>
+  );
+}
+
+/* ============================================
+   MODERN STAT CARD WITH TREND
+   ============================================ */
+function ModernStatCard({ icon: Icon, label, value, displayValue, detail, trend, trendValue, color = 'mint', delay = 0, unit = '', className = '' }) {
+  const [isVisible, setIsVisible] = useState(false);
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setTimeout(() => setIsVisible(true), delay);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [delay]);
+
+  const isPositive = trend === 'up';
+  const TrendIcon = isPositive ? TrendingUp : TrendingDown;
+
+  const colorVar = {
+    mint: 'var(--accent-mint)',
+    blue: 'var(--accent-cyan)',
+    amber: 'var(--accent-amber)',
+    violet: 'var(--accent-violet)',
+    rose: 'var(--accent-rose)'
+  }[color] || 'var(--accent-mint)';
+
+  return (
+    <div
+      ref={cardRef}
+      className={`modern-stat-card ${className} ${isVisible ? 'visible' : ''}`}
+      style={{ '--accent-color': colorVar }}
+    >
+      <div className="stat-icon">
+        <Icon size={24} />
+      </div>
+      <div className="stat-content">
+        <span className="stat-label">{label}</span>
+        <span className="stat-value">
+          {displayValue!==undefined?displayValue:<AnimatedCounter value={value} />}
+          {unit && <span className="stat-unit">{unit}</span>}
+        </span>
+        {detail&&<small className="stat-detail">{detail}</small>}
+        {trend && (
+          <span className={`stat-trend ${isPositive ? 'positive' : 'negative'}`}>
+            <TrendIcon size={14} />
+            <span>{trendValue}%</span>
+            <span className="trend-period">vs last mo</span>
+          </span>
+        )}
+      </div>
+      <div className="stat-glow" />
+    </div>
+  );
+}
+
+/* ============================================
+   MODERN KPI CARD - SIMPLE CLEAN LAYOUT
+   ============================================ */
+function ModernKpiCard({
+  title, subtitle, icon:Icon, value, unit="", decimals=0, period="",
+  data=[], dailyData=[], dailyUnit="", dailySubtitle="", year=new Date().getFullYear(),
+  enablePeriod=false, target=0, targetLabel="", color="#6366f1", onClick
+}) {
+  const [animated, setAnimated] = useState(false);
+  const [activePoint, setActivePoint] = useState(null);
+  const [periodChoice,setPeriodChoice]=useState("year");
+  const [chartWidth,setChartWidth]=useState(640);
+  const ref = useRef(null);
+  const chartRef=useRef(null);
+  const touchTimerRef = useRef(null);
+  useEffect(() => {
+    const o = new IntersectionObserver(([e]) => { if (e.isIntersecting) setAnimated(true); }, { threshold: 0.2 });
+    if (ref.current) o.observe(ref.current);
+    return () => {
+      o.disconnect();
+      if (touchTimerRef.current) window.clearTimeout(touchTimerRef.current);
+    };
+  }, []);
+  const H=190,W=chartWidth,pL=14,pR=14,pT=14,pB=34;
+  useEffect(()=>{
+    const element=chartRef.current;
+    if(!element||typeof ResizeObserver==="undefined")return;
+    const update=()=>{
+      const {width,height}=element.getBoundingClientRect();
+      if(width<=0||height<=0)return;
+      const next=Math.round(Math.min(1800,Math.max(640,H*(width/height))));
+      setChartWidth(current=>Math.abs(current-next)>2?next:current);
+    };
+    const observer=new ResizeObserver(update);
+    observer.observe(element);
+    update();
+    return()=>observer.disconnect();
+  },[]);
+  const iW = W - pL - pR, iH = H - pT - pB;
+  const today=new Date(),currentMonth=today.getMonth()+1;
+  const selectedMonth=periodChoice==="year"?null:Number(periodChoice);
+  const selectableMonthCount=Number(year)===today.getFullYear()?currentMonth:12;
+  const visibleLastDay=selectedMonth
+    ?(Number(year)===today.getFullYear()&&selectedMonth===currentMonth?today.getDate():new Date(Number(year),selectedMonth,0).getDate())
+    :12;
+  const parseDate=value=>{
+    const source=String(value||"");
+    let match=source.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if(match)return{year:Number(match[1]),month:Number(match[2]),day:Number(match[3])};
+    match=source.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+    return match?{year:Number(match[3]),month:Number(match[2]),day:Number(match[1])}:null;
+  };
+  const selectedRows=selectedMonth?asArray(dailyData).filter(item=>{
+    const parts=parseDate(item.tanggal||item.date);
+    return parts?.year===Number(year)&&parts.month===selectedMonth&&parts.day<=visibleLastDay;
+  }):[];
+  const dailyByDay=new Map(selectedRows.map(item=>[parseDate(item.tanggal||item.date)?.day,Number(item.value)||0]));
+  const displayedData=selectedMonth?(selectedRows.length?Array.from({length:visibleLastDay},(_,index)=>({label:String(index+1),slot:index,value:dailyByDay.get(index+1)||0})):[]):data;
+  const axisLabels=selectedMonth?Array.from({length:visibleLastDay},(_,index)=>String(index+1)):SCHEDULE_MONTHS.map(name=>name.slice(0,3));
+  const pointSlot=(item,index)=>{
+    if(selectedMonth)return Number.isFinite(Number(item?.slot))?Number(item.slot):index;
+    const label=String(item?.label||"").slice(0,3).toLocaleLowerCase("id-ID");
+    const slot=axisLabels.findIndex(month=>month.toLocaleLowerCase("id-ID")===label);
+    return slot>=0?slot:Math.min(index,axisLabels.length-1);
+  };
+  const effectiveTarget=selectedMonth?0:target;
+  const effectiveTargetLabel=selectedMonth?"":targetLabel;
+  const effectiveUnit=selectedMonth?(dailyUnit||unit):unit;
+  const effectiveSubtitle=selectedMonth?(dailySubtitle||subtitle):subtitle;
+  const effectiveValue=selectedMonth?selectedRows.reduce((total,item)=>total+(Number(item.value)||0),0):value;
+  const effectivePeriod=selectedMonth?`1–${visibleLastDay} ${SCHEDULE_MONTHS[selectedMonth-1]} ${year}`:period;
+  const mx = Math.max(1, Number(effectiveTarget)||0, ...displayedData.map(d => Math.abs(Number(d.value)||0))) * 1.12;
+  const gX = slot => pL + (slot / Math.max(1,axisLabels.length-1)) * iW;
+  const gY = v => pT + iH - (Math.max(0,Number(v)||0) / mx) * iH;
+  const chartPoints = displayedData.map((item,index) => ({ x:gX(pointSlot(item,index)), y:gY(item.value) }));
+  const smoothPath = chartPoints.length
+    ? chartPoints.slice(1).reduce((path,point,index) => {
+      const previousPrevious=chartPoints[index-1]||chartPoints[index];
+      const previous=chartPoints[index];
+      const next=chartPoints[index+2]||point;
+      const minY=Math.min(previous.y,point.y),maxY=Math.max(previous.y,point.y);
+      const clampY=value=>Math.min(maxY,Math.max(minY,value));
+      const control1={
+        x:previous.x+(point.x-previousPrevious.x)/6,
+        y:clampY(previous.y+(point.y-previousPrevious.y)/6)
+      };
+      const control2={
+        x:point.x-(next.x-previous.x)/6,
+        y:clampY(point.y-(next.y-previous.y)/6)
+      };
+      return `${path} C ${control1.x},${control1.y} ${control2.x},${control2.y} ${point.x},${point.y}`;
+    },`M ${chartPoints[0].x},${chartPoints[0].y}`)
+    : "";
+  const areaPath=smoothPath
+    ? `${smoothPath} L ${chartPoints.at(-1).x},${pT+iH} L ${chartPoints[0].x},${pT+iH} Z`
+    : "";
+  const gid = "c"+title.replace(/[^a-z0-9]/gi, "_");
+  const targetY = effectiveTarget > 0 ? gY(effectiveTarget) : null;
+  const formatValue = number => new Intl.NumberFormat("id-ID",{
+    maximumFractionDigits:decimals
+  }).format(Number(number)||0);
+  const selectChartPoint = event => {
+    if (!chartPoints.length) return;
+    event.stopPropagation();
+    if (touchTimerRef.current) window.clearTimeout(touchTimerRef.current);
+    const bounds=event.currentTarget.getBoundingClientRect();
+    const pointerX=((event.clientX-bounds.left)/Math.max(1,bounds.width))*W;
+    const nearest=chartPoints.reduce((best,point,index) => (
+      Math.abs(point.x-pointerX)<Math.abs(chartPoints[best].x-pointerX)?index:best
+    ),0);
+    setActivePoint(nearest);
+  };
+  const keepTouchValueVisible = event => {
+    event.stopPropagation();
+    if (touchTimerRef.current) window.clearTimeout(touchTimerRef.current);
+    touchTimerRef.current=window.setTimeout(()=>setActivePoint(null),2400);
+  };
+  const selected=activePoint!==null&&displayedData[activePoint]&&chartPoints[activePoint]
+    ? {...displayedData[activePoint],...chartPoints[activePoint]}
+    : null;
+  return (
+    <div
+      ref={ref}
+      className={"kpi-card "+(animated?"in ":"")+(onClick?"clickable":"")}
+      onClick={onClick}
+      onKeyDown={event => {
+        if(event.target.closest?.("select,input,button"))return;
+        if (onClick && (event.key === "Enter" || event.key === " ")) onClick();
+      }}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      style={{"--chart-color":color}}
+    >
+      <div className="kpi-top">
+        <div className="kpi-icon-wrap" style={{background: color+"22", color: color}}><Icon size={18}/></div>
+        <div className="kpi-text">
+          <div className="kpi-label">{title}</div>
+          <div className="kpi-val"><b>{formatValue(effectiveValue)}</b>{effectiveUnit&&<span>{effectiveUnit}</span>}</div>
+          {effectiveSubtitle&&<div className="kpi-card-subtitle">{effectiveSubtitle}</div>}
+        </div>
+        {enablePeriod&&<label className="kpi-period-control" onClick={event=>event.stopPropagation()}><span>Periode</span><select value={periodChoice} onChange={event=>{setPeriodChoice(event.target.value);setActivePoint(null);}}><option value="year">Tahunan {year}</option>{SCHEDULE_MONTHS.slice(0,selectableMonthCount).map((month,index)=><option key={month} value={index+1}>{month} {year}</option>)}</select></label>}
+        {onClick && <div className="kpi-arr" aria-hidden="true">→</div>}
+      </div>
+      <div ref={chartRef} className="kpi-chart" onClick={event=>event.stopPropagation()}>
+        {displayedData.length ? <svg
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label={`Grafik ${title}, ${effectivePeriod}`}
+          onPointerDown={selectChartPoint}
+          onPointerMove={event => {
+            if (event.pointerType==="mouse") selectChartPoint(event);
+          }}
+          onPointerUp={keepTouchValueVisible}
+          onPointerCancel={keepTouchValueVisible}
+          onPointerLeave={event => {
+            if (event.pointerType==="mouse") setActivePoint(null);
+          }}
+        >
+          <defs>
+            <linearGradient id={"area"+gid} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity=".3"/>
+              <stop offset="55%" stopColor={color} stopOpacity=".1"/>
+              <stop offset="100%" stopColor={color} stopOpacity="0"/>
+            </linearGradient>
+            <filter id={"glow"+gid} x="-20%" y="-40%" width="140%" height="180%">
+              <feGaussianBlur stdDeviation="2.2" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          {[0,.2,.4,.6,.8,1].map(step=><line key={`h-${step}`} x1={pL} x2={W-pR} y1={pT+iH-(iH*step)} y2={pT+iH-(iH*step)} className="kpi-grid-line"/>)}
+          {targetY!==null&&<g className="kpi-target"><line x1={pL} x2={W-pR} y1={targetY} y2={targetY} className="kpi-target-line"/><text x={pL+6} y={Math.max(pT+10,targetY-7)} className="kpi-target-label">{effectiveTargetLabel||`Target ${formatValue(effectiveTarget)} ${effectiveUnit}`}</text></g>}
+          {areaPath&&<path d={areaPath} fill={`url(#area${gid})`} className="kpi-area"/>}
+          {smoothPath && <path d={smoothPath} fill="none" stroke={color} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" opacity=".12" filter={`url(#glow${gid})`} className="kpi-line-glow"/>}
+          {smoothPath && <path d={smoothPath} pathLength="1" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="kpi-line"/>}
+          {displayedData.map((d,i) => <g key={`${d.label}-${i}`}>
+            <circle cx={gX(pointSlot(d,i))} cy={gY(d.value)} r={activePoint===i?"9":"6"} fill={color} opacity={animated ? (activePoint===i?.24:.12) : 0}/>
+            <circle cx={gX(pointSlot(d,i))} cy={gY(d.value)} r={activePoint===i?"5":"3.5"} fill="#101827" stroke={color} strokeWidth="2" opacity={animated?1:0} className="kpi-point-ring">
+              <title>{`${selectedMonth?`Tanggal ${d.label}`:d.label}: ${formatValue(d.value)} ${effectiveUnit}`}</title>
+            </circle>
+            {(!selectedMonth||Number(d.value)!==0)&&<text x={gX(pointSlot(d,i))} y={Math.max(pT+9,gY(d.value)-9)} textAnchor="middle" className="kpi-point-value" style={{fill:color}}>{formatValue(d.value)}</text>}
+          </g>)}
+          {axisLabels.map((label,index)=><text key={`${label}-${index}`} x={gX(index)} y={H-9} textAnchor="middle" className={selectedMonth?"kpi-day-label":"kpi-month-label"}>{label}</text>)}
+        </svg> : <div className="kpi-chart-empty">Belum ada data grafik</div>}
+        {selected&&<div
+          className="kpi-touch-tooltip"
+          style={{
+            left:`${Math.min(88,Math.max(12,(selected.x/W)*100))}%`,
+            top:`${Math.max(5,(selected.y/H)*100)}%`,
+            "--chart-color":color
+          }}
+        >
+          <span>{selectedMonth?`Tanggal ${selected.label} ${SCHEDULE_MONTHS[selectedMonth-1]}`:selected.label}</span>
+          <b>{formatValue(selected.value)} {effectiveUnit}</b>
+        </div>}
+      </div>
+      <div className="kpi-mobile-chart-hint"><ArrowRight size={12}/> Sentuh grafik untuk melihat nilai</div>
+      <div className="kpi-chart-legend">
+        <span><i className="actual" style={{background:color}}/>Aktual</span>
+        {effectiveTarget>0&&<span><i className="target"/>{effectiveTargetLabel||`Target ${formatValue(effectiveTarget)} ${effectiveUnit}`}</span>}
+        {effectivePeriod&&<span className="period">{effectivePeriod}</span>}
+      </div>
+    </div>
+  );
+}
+
+function MonthlyKvarhCard({data=[],rawData=[],loading,rawLoading,error,rawError,year,onRetry}) {
+  const today=new Date();
+  const currentMonth=today.getMonth()+1;
+  const currentDay=today.getDate();
+  const [periodChoice,setPeriodChoice]=useState("year");
+  const [activePoint,setActivePoint]=useState(null);
+  const touchTimerRef=useRef(null);
+  useEffect(()=>()=>{if(touchTimerRef.current)window.clearTimeout(touchTimerRef.current);},[]);
+  const selectedMonth=periodChoice==="year"?null:Number(periodChoice);
+  const selectedMonthName=selectedMonth?SCHEDULE_MONTHS[selectedMonth-1]:"";
+  const visibleLastDay=selectedMonth?(selectedMonth===currentMonth?currentDay:new Date(Number(year),selectedMonth,0).getDate()):12;
+  const dailyData=selectedMonth?Array.from({length:visibleLastDay},(_,index)=>({
+    slot:index+1,day:index+1,label:`${index+1} ${SCHEDULE_MONTHS[selectedMonth-1].slice(0,3)}`,
+    activeKwh:0,reactiveKvarh:0,reactiveLimitKvarh:0,excessReactiveKvarh:0,
+    conclusion:"AMAN",checkCount:0,lastEntryDay:index+1,isPartial:selectedMonth===currentMonth,
+  })):[];
+  if(selectedMonth)asArray(rawData).forEach(item=>{
+    const match=String(item.tanggal||"").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const day=Number(match?.[1]),month=Number(match?.[2]),itemYear=Number(match?.[3]);
+    if(itemYear!==Number(year)||month!==selectedMonth||day<1||day>visibleLastDay)return;
+    const active=Number(item.pemakaian_kwh),reactive=Number(item.nilai_kvar);
+    if(!Number.isFinite(active)||!Number.isFinite(reactive)||active<0||reactive<0)return;
+    dailyData[day-1].activeKwh+=active;dailyData[day-1].reactiveKvarh+=reactive;dailyData[day-1].checkCount+=1;
+  });
+  dailyData.forEach(item=>{
+    item.reactiveLimitKvarh=item.activeKwh*.62;
+    item.excessReactiveKvarh=Math.max(0,item.reactiveKvarh-item.reactiveLimitKvarh);
+    item.conclusion=item.reactiveKvarh>item.reactiveLimitKvarh?"POTENSI DENDA":"AMAN";
+  });
+  const annualData=asArray(data).map(item=>({...item,slot:Number(item.month)}));
+  const displayData=selectedMonth?dailyData:annualData;
+  const populated=displayData.filter(item=>Number(item.checkCount)>0);
+  const latest=populated.at(-1);
+  const axisLabels=selectedMonth?Array.from({length:visibleLastDay},(_,index)=>String(index+1)):SCHEDULE_MONTHS.map(name=>name.slice(0,3));
+  const activeLoading=selectedMonth?rawLoading:loading,activeError=selectedMonth?rawError:error;
+  const W=1100,H=270,pL=24,pR=24,pT=35,pB=42,iW=W-pL-pR,iH=H-pT-pB;
+  const maxValue=Math.max(1,...populated.flatMap(item=>[Number(item.reactiveKvarh)||0,Number(item.reactiveLimitKvarh)||0]))*1.18;
+  const x=slot=>pL+((Number(slot)-1)/Math.max(1,axisLabels.length-1))*iW;
+  const y=value=>pT+iH-(Math.max(0,Number(value)||0)/maxValue)*iH;
+  const actualPoints=populated.map(item=>({x:x(item.slot),y:y(item.reactiveKvarh),item}));
+  const limitPoints=populated.map(item=>({x:x(item.slot),y:y(item.reactiveLimitKvarh),item}));
+  const line=points=>points.map((point,index)=>`${index?"L":"M"} ${point.x} ${point.y}`).join(" ");
+  const area=actualPoints.length?`${line(actualPoints)} L ${actualPoints.at(-1).x} ${pT+iH} L ${actualPoints[0].x} ${pT+iH} Z`:"";
+  const number=value=>new Intl.NumberFormat("id-ID",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value)||0);
+  const choosePoint=event=>{
+    if(!actualPoints.length)return;
+    const bounds=event.currentTarget.getBoundingClientRect();
+    const pointerX=((event.clientX-bounds.left)/Math.max(1,bounds.width))*W;
+    const nearest=actualPoints.reduce((best,point,index)=>Math.abs(point.x-pointerX)<Math.abs(actualPoints[best].x-pointerX)?index:best,0);
+    setActivePoint(nearest);
+  };
+  const keepVisible=()=>{if(touchTimerRef.current)window.clearTimeout(touchTimerRef.current);touchTimerRef.current=window.setTimeout(()=>setActivePoint(null),3000);};
+  const selected=activePoint===null?null:actualPoints[activePoint];
+  const title=selectedMonth?`Monitoring kVArh harian · ${selectedMonthName} ${year}`:`Monitoring kVArh bulanan · ${year}`;
+  const subtitle=selectedMonth?`Akumulasi per hari, tanggal 1–${visibleLastDay}.`:`Akumulasi tanggal 1–akhir bulan; bulan berjalan sampai hari ini.`;
+  return <article className="monthly-kvarh-card">
+    <div className="monthly-kvarh-head">
+      <div className="monthly-kvarh-title"><span className="kpi-icon-wrap"><Zap size={19}/></span><div><p className="eyebrow">Energi reaktif PLN</p><h3>{title}</h3><small>{subtitle}</small></div></div>
+      <div className="monthly-kvarh-controls"><label><span>Pilih periode</span><select value={periodChoice} onChange={event=>{setPeriodChoice(event.target.value);setActivePoint(null);}}><option value="year">Bulanan — 1 tahun</option>{SCHEDULE_MONTHS.slice(0,currentMonth).map((month,index)=><option key={month} value={index+1}>{month} {year}</option>)}</select></label>{latest&&<div className={`monthly-kvarh-status ${latest.conclusion==="AMAN"?"safe":"penalty"}`}><span>{latest.label} {year}{latest.isPartial?" · Sementara":""}</span><b>{latest.conclusion}</b><small>Selisih {latest.reactiveLimitKvarh-latest.reactiveKvarh>=0?"+":"−"}{number(Math.abs(latest.reactiveLimitKvarh-latest.reactiveKvarh))} kVArh</small></div>}</div>
+    </div>
+    {activeLoading?<div className="kvarh-state">Memuat grafik kVArh…</div>:activeError?<div className="kvarh-state error">Grafik gagal dimuat. <button type="button" onClick={onRetry}>Coba lagi</button></div>:!populated.length?<div className="kvarh-state">Belum ada isian stand meter pada {selectedMonth?`${selectedMonthName} `:""}{year}.</div>:<>
+      <div className="monthly-kvarh-chart">
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${title}, aktual dan batas aman`}
+          onPointerDown={choosePoint} onPointerMove={event=>{if(event.pointerType==="mouse"&&!event.buttons)choosePoint(event);}}
+          onPointerUp={keepVisible} onPointerCancel={keepVisible} onPointerLeave={event=>{if(event.pointerType==="mouse")setActivePoint(null);}}>
+          <defs><linearGradient id="kvarhArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#a78bfa" stopOpacity=".32"/><stop offset="100%" stopColor="#a78bfa" stopOpacity="0"/></linearGradient></defs>
+          {[0,.25,.5,.75,1].map(step=><line key={step} x1={pL} x2={W-pR} y1={pT+iH-iH*step} y2={pT+iH-iH*step} className="kpi-grid-line"/>)}
+          {area&&<path d={area} fill="url(#kvarhArea)"/>}<path d={line(limitPoints)} className="kvarh-limit-line"/><path d={line(actualPoints)} className="kvarh-actual-line"/>
+          {limitPoints.map(({x:cx,y:cy,item})=><g key={`limit-${item.slot}`}><circle cx={cx} cy={cy} r="3" className="kvarh-limit-point"/><text x={cx} y={Math.min(pT+iH-14,cy+15)} textAnchor="middle" className="kvarh-limit-value">{number(item.reactiveLimitKvarh)}</text><text x={cx} y={pT+iH-3} textAnchor="middle" className={`kvarh-difference-value ${item.conclusion==="AMAN"?"safe":"penalty"}`}>Δ {item.reactiveLimitKvarh-item.reactiveKvarh>=0?"+":"−"}{number(Math.abs(item.reactiveLimitKvarh-item.reactiveKvarh))}</text></g>)}
+          {actualPoints.map(({x:cx,y:cy,item},index)=><g key={`actual-${item.slot}`}><circle cx={cx} cy={cy} r={activePoint===index?8:6} className={`kvarh-point-halo ${item.conclusion==="AMAN"?"safe":"penalty"}`}/><circle cx={cx} cy={cy} r="3.5" className={`kvarh-actual-point ${item.conclusion==="AMAN"?"safe":"penalty"}`}/><text x={cx} y={Math.max(12,cy-11)} textAnchor="middle" className={`kvarh-actual-value ${item.conclusion==="AMAN"?"safe":"penalty"}`}>{number(item.reactiveKvarh)}</text></g>)}
+          {axisLabels.map((label,index)=><text key={`${label}-${index}`} x={x(index+1)} y={H-11} textAnchor="middle" className={selectedMonth?"kvarh-day-label":"kpi-month-label"}>{label}</text>)}
+        </svg>
+        {selected&&<div className="kvarh-tooltip" style={{left:`${Math.min(90,Math.max(10,(selected.x/W)*100))}%`,top:`${Math.max(4,(selected.y/H)*100)}%`}}><b>{selected.item.label} {year}{selected.item.isPartial?" (sementara)":""}</b><span>Aktual: {number(selected.item.reactiveKvarh)} kVArh</span><span>Batas: {number(selected.item.reactiveLimitKvarh)} kVArh</span><span>Selisih: {selected.item.reactiveLimitKvarh-selected.item.reactiveKvarh>=0?"+":"−"}{number(Math.abs(selected.item.reactiveLimitKvarh-selected.item.reactiveKvarh))} kVArh</span><strong className={selected.item.conclusion==="AMAN"?"safe":"penalty"}>{selected.item.conclusion}</strong><small>{selected.item.checkCount} isian{selectedMonth?"":` · terakhir tgl ${selected.item.lastEntryDay}`}</small></div>}
+      </div>
+      <div className="monthly-kvarh-foot"><span><i className="actual"/>Aktual kVArh</span><span><i className="limit"/>Batas aman 62% × kWh</span><span><i className="difference"/>Δ Selisih batas − aktual</span><span><i className="safe"/>Aman</span><span><i className="penalty"/>Potensi denda</span><em>Sentuh grafik untuk rincian nilai</em></div>
+    </>}
+  </article>;
+}
+
+function CosPhiPanelChart({data=[],loading,error,year,onRetry}) {
+  const minimumAllowed=.85;
+  const today=new Date();
+  const currentMonth=today.getMonth()+1;
+  const currentDay=today.getDate();
+  const [selectedMonth,setSelectedMonth]=useState(currentMonth);
+  const selectedMonthDate=new Date(Number(year),selectedMonth-1,1);
+  const selectedMonthName=new Intl.DateTimeFormat("id-ID",{month:"long"}).format(selectedMonthDate);
+  const visibleLastDay=selectedMonth===currentMonth?currentDay:new Date(Number(year),selectedMonth,0).getDate();
+  const selectableMonths=SCHEDULE_MONTHS.slice(0,currentMonth);
+  const panels=[
+    {code:"panel_1",name:"Panel 1",color:"#22d3ee"},
+    {code:"panel_2",name:"Panel 2",color:"#a78bfa"},
+    {code:"panel_3",name:"Panel 3",color:"#f59e0b"},
+    {code:"panel_4",name:"Panel 4",color:"#ec4899"},
+  ];
+  const [activeDay,setActiveDay]=useState(null);
+  const timerRef=useRef(null);
+  useEffect(()=>()=>{if(timerRef.current)window.clearTimeout(timerRef.current);},[]);
+  const dailyLatest=new Map();
+  asArray(data).forEach(item=>{
+    const match=String(item.tanggal||"").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const day=Number(match?.[1]),month=Number(match?.[2]),itemYear=Number(match?.[3]),value=Number(item.cos_phi);
+    if(itemYear!==Number(year)||month!==selectedMonth||day<1||day>visibleLastDay||!Number.isFinite(value))return;
+    const key=`${item.code}-${day}`;
+    if(!dailyLatest.has(key))dailyLatest.set(key,{...item,day,value});
+  });
+  const series=panels.map(panel=>({...panel,points:Array.from({length:visibleLastDay},(_,index)=>dailyLatest.get(`${panel.code}-${index+1}`)).filter(Boolean)}));
+  const allPoints=series.flatMap(panel=>panel.points);
+  const latestByPanel=series.map(panel=>({...panel,latest:panel.points.at(-1)}));
+  const W=1100,H=275,pL=34,pR=24,pT=25,pB=43,iW=W-pL-pR,iH=H-pT-pB;
+  const lowest=allPoints.length?Math.min(...allPoints.map(point=>point.value),minimumAllowed):minimumAllowed;
+  const domainMin=Math.max(0,Math.min(.8,Math.floor((lowest-.03)*20)/20));
+  const x=day=>pL+((day-1)/Math.max(1,visibleLastDay-1))*iW;
+  const y=value=>pT+iH-((Math.max(domainMin,Math.min(1,Number(value)))-domainMin)/(1-domainMin))*iH;
+  const path=points=>points.map((point,index)=>`${index?"L":"M"} ${x(point.day)} ${y(point.value)}`).join(" ");
+  const number=value=>Number(value).toLocaleString("id-ID",{minimumFractionDigits:2,maximumFractionDigits:3});
+  const selectDay=event=>{
+    if(!allPoints.length)return;
+    const bounds=event.currentTarget.getBoundingClientRect();
+    const pointerX=((event.clientX-bounds.left)/Math.max(1,bounds.width))*W;
+    const nearest=Math.max(1,Math.min(visibleLastDay,Math.round(((pointerX-pL)/iW)*Math.max(1,visibleLastDay-1))+1));
+    setActiveDay(nearest);
+  };
+  const keepVisible=()=>{
+    if(timerRef.current)window.clearTimeout(timerRef.current);
+    timerRef.current=window.setTimeout(()=>setActiveDay(null),3000);
+  };
+  const selectedValues=activeDay===null?[]:series.map(panel=>({...panel,point:dailyLatest.get(`${panel.code}-${activeDay}`)})).filter(panel=>panel.point);
+  return <article className="cosphi-chart-card">
+    <div className="cosphi-chart-head">
+      <div className="cosphi-chart-title"><span className="kpi-icon-wrap"><Activity size={19}/></span><div><p className="eyebrow">Monitoring faktor daya panel</p><h3>Grafik cos φ harian · {selectedMonthName} {year}</h3><small>Pembacaan terakhir per hari, tanggal 1–{visibleLastDay}; tidak memengaruhi perhitungan kVArh.</small></div></div>
+      <div className="cosphi-chart-controls"><label><span>Pilih bulan</span><select value={selectedMonth} onChange={event=>{setSelectedMonth(Number(event.target.value));setActiveDay(null);}}>{selectableMonths.map((month,index)=><option key={month} value={index+1}>{month} {year}</option>)}</select></label><div className="cosphi-allowed"><span>Batas monitoring</span><b>0,85–1,00</b><small>Di bawah 0,85 perlu perhatian</small></div></div>
+    </div>
+    <div className="cosphi-latest-grid">{latestByPanel.map(panel=><div key={panel.code} className={!panel.latest?"empty":panel.latest.value>=minimumAllowed?"safe":"warning"}><i style={{background:panel.color}}/><span>{panel.name}</span><b>{panel.latest?number(panel.latest.value):"–"}</b><small>{!panel.latest?"Belum ada data":panel.latest.value>=minimumAllowed?"DIIZINKAN":"PERLU PERHATIAN"}</small></div>)}</div>
+    {loading?<div className="kvarh-state">Memuat grafik cos φ…</div>:error?<div className="kvarh-state error">Grafik gagal dimuat. <button type="button" onClick={onRetry}>Coba lagi</button></div>:!allPoints.length?<div className="kvarh-state">Belum ada pembacaan cos φ panel pada {selectedMonthName} {year}.</div>:<>
+      <div className="cosphi-chart">
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Grafik harian cos phi Panel 1 sampai 4 bulan ${selectedMonthName} ${year}`}
+          onPointerDown={selectDay} onPointerMove={event=>{if(event.pointerType==="mouse"&&!event.buttons)selectDay(event);}}
+          onPointerUp={keepVisible} onPointerCancel={keepVisible} onPointerLeave={event=>{if(event.pointerType==="mouse")setActiveDay(null);}}>
+          <rect x={pL} y={y(1)} width={iW} height={y(minimumAllowed)-y(1)} className="cosphi-safe-area"/>
+          {[domainMin,minimumAllowed,.9,.95,1].filter((value,index,list)=>list.indexOf(value)===index).map(value=><g key={value}><line x1={pL} x2={W-pR} y1={y(value)} y2={y(value)} className={value===minimumAllowed?"cosphi-limit-line":"kpi-grid-line"}/><text x={pL-7} y={y(value)+3} textAnchor="end" className="cosphi-axis-label">{number(value)}</text></g>)}
+          <text x={pL+8} y={Math.max(pT+11,y(minimumAllowed)-7)} className="cosphi-limit-label">Batas minimum 0,85</text>
+          {series.map(panel=>panel.points.length?<path key={panel.code} d={path(panel.points)} fill="none" stroke={panel.color} className="cosphi-series-line"/>:null)}
+          {series.map((panel,panelIndex)=>panel.points.map(point=><g key={`${panel.code}-${point.day}`}><circle cx={x(point.day)} cy={y(point.value)} r="7" fill={point.value>=minimumAllowed?panel.color:"#fb7185"} opacity=".16"/><circle cx={x(point.day)} cy={y(point.value)} r="3.5" fill="#101827" stroke={point.value>=minimumAllowed?panel.color:"#fb7185"} strokeWidth="2"/><text x={x(point.day)} y={Math.max(pT+9,Math.min(pT+iH-5,y(point.value)+(panelIndex%2===0?-10:15)))} textAnchor="middle" className="cosphi-point-value" style={{fill:point.value>=minimumAllowed?panel.color:"#fb7185"}}>{number(point.value)}</text></g>))}
+          {Array.from({length:visibleLastDay},(_,index)=>index+1).map(day=><text key={day} x={x(day)} y={H-11} textAnchor="middle" className="cosphi-day-label">{day}</text>)}
+        </svg>
+        {activeDay!==null&&<div className="cosphi-tooltip" style={{left:`${Math.min(90,Math.max(10,(x(activeDay)/W)*100))}%`}}><b>{activeDay} {selectedMonthName} {year}</b>{selectedValues.length?selectedValues.map(panel=><span key={panel.code}><i style={{background:panel.color}}/>{panel.name}: <strong className={panel.point.value>=minimumAllowed?"safe":"warning"}>{number(panel.point.value)}</strong></span>):<small>Tidak ada pembacaan pada tanggal ini</small>}</div>}
+      </div>
+      <div className="cosphi-chart-legend">{panels.map(panel=><span key={panel.code}><i style={{background:panel.color}}/>{panel.name}</span>)}<span><i className="limit"/>Minimum 0,85</span><em>Sentuh grafik untuk melihat nilai</em></div>
+    </>}
+  </article>;
 }
 
 function DashboardKpiChart({ title,subtitle,icon:Icon,data,target=0,maxValue,color,unit,decimals=0,loading,error,onClick }) {
@@ -582,16 +1338,31 @@ function Orders({ go }) {
 }
 
 function OrderTable({ orders, onClick }) {
-  return <div className="table-wrap"><table><thead><tr><th>Tanggal</th><th>Mesin / Kerusakan</th><th>Pengorder</th><th>Urgensi</th><th>Status</th><th /></tr></thead><tbody>{orders.map((o) => <tr key={o.rowIndex} onClick={() => onClick(o)}><td>{o.tanggal}</td><td><b>{o.namaMesin}</b><small>{o.kerusakan}</small></td><td><b>{o.namaOrder}</b><small>{o.bagianOrder} → {o.bagianTujuan}</small></td><td><Badge text={o.urgensi} /></td><td><Badge text={o.status} /></td><td><ArrowRight size={17} /></td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap order-table"><table><thead><tr><th>Tanggal</th><th>Mesin / Kerusakan</th><th>Pengorder</th><th>Urgensi</th><th>Status</th><th /></tr></thead><tbody>{orders.map((o) => <tr key={o.rowIndex} onClick={() => onClick(o)}><td>{o.tanggal}</td><td><b>{o.namaMesin}</b><small>{o.kerusakan}</small></td><td><b>{o.namaOrder}</b><small>{o.bagianOrder} → {o.bagianTujuan}</small></td><td><Badge text={o.urgensi} /></td><td><Badge text={o.status} /></td><td><ArrowRight size={17} /></td></tr>)}</tbody></table></div>;
 }
 
 function OrderDetail({ order, go }) {
+  const download=()=>exportCsv(
+    ["Field","Nilai"],
+    [
+      ["Nomor order",`WO-${String(order.rowIndex).padStart(4,"0")}`],
+      ["Tanggal order",order.tanggal],
+      ["Mesin / aset",order.namaMesin],
+      ["Kerusakan",order.kerusakan],
+      ["Urgensi",order.urgensi],
+      ["Nama pengorder",order.namaOrder],
+      ["Bagian pengorder",order.bagianOrder],
+      ["Bagian tujuan",order.bagianTujuan],
+      ["Status",order.status]
+    ],
+    `order-WO-${order.rowIndex}`
+  );
   return <div className="detail-grid">
     <Panel title={`WO-${String(order.rowIndex).padStart(4, "0")}`} action={<Badge text={order.status} />}>
       <div className="detail-hero"><span className="icon-box amber"><Wrench /></span><div><p>MESIN / ASET</p><h2>{order.namaMesin}</h2><span>{order.kerusakan}</span></div></div>
       <div className="info-grid">{[["Tanggal order", order.tanggal],["Tingkat urgensi", order.urgensi],["Nama pengorder", order.namaOrder],["Bagian pengorder", order.bagianOrder],["Bagian tujuan", order.bagianTujuan],["Status pekerjaan", order.status]].map(([a,b]) => <div key={a}><small>{a}</small><b>{b}</b></div>)}</div>
     </Panel>
-    <Panel title="Tindakan selanjutnya"><div className="action-stack"><button className="primary wide" onClick={() => go("finishOrder")}><ClipboardCheck size={18} /> Lakukan perbaikan</button><button className="secondary wide"><Download size={18} /> Unduh detail order</button></div><p className="hint"><ShieldCheck size={16} /> Pastikan kondisi mesin aman sebelum memulai pekerjaan.</p></Panel>
+    <Panel title="Tindakan selanjutnya"><div className="action-stack"><button className="primary wide" onClick={() => go("finishOrder")}><ClipboardCheck size={18} /> Lakukan perbaikan</button><button className="secondary wide" onClick={download}><Download size={18} /> Unduh detail order</button></div><p className="hint"><ShieldCheck size={16} /> Pastikan kondisi mesin aman sebelum memulai pekerjaan.</p></Panel>
   </div>;
 }
 
@@ -653,14 +1424,18 @@ function WorkOrderForm({ notify, go, initialMachine="", onSuccess }) {
 }
 
 function FinishOrder({ order, notify, go }) {
-  const parts=useRemoteData(()=>getFirestoreCollection("master_part"));
+  const parts=useRemoteData(async()=>asArray(await apiGet(ENDPOINTS.partMaster,{action:"getPart"}),["stok","parts"]));
   const [partMode,setPartMode]=useState("none");
   const [partCategory,setPartCategory]=useState("");
   const [partName,setPartName]=useState("Tidak Pakai");
   const [partSize,setPartSize]=useState("Tidak Pakai");
-  const partCategories=[...new Set(parts.data.map(item=>item.Kategori||item.kategori).filter(Boolean))].sort();
-  const partNames=[...new Set(parts.data.filter(item=>!partCategory||(item.Kategori||item.kategori)===partCategory).map(item=>item.Nama||item.nama).filter(Boolean))].sort();
-  const partSizes=[...new Set(parts.data.filter(item=>(item.Kategori||item.kategori)===partCategory&&(item.Nama||item.nama)===partName).map(item=>item.Ukuran||item.ukuran).filter(Boolean))].sort();
+  const partRows=parts.data.map(item=>Array.isArray(item)
+    ? {Kategori:item[0],Nama:item[1],Ukuran:item[2]}
+    : item
+  );
+  const partCategories=[...new Set(partRows.map(item=>item.Kategori||item.kategori).filter(Boolean))].sort();
+  const partNames=[...new Set(partRows.filter(item=>!partCategory||(item.Kategori||item.kategori)===partCategory).map(item=>item.Nama||item.nama).filter(Boolean))].sort();
+  const partSizes=[...new Set(partRows.filter(item=>(item.Kategori||item.kategori)===partCategory&&(item.Nama||item.nama)===partName).map(item=>item.Ukuran||item.ukuran).filter(Boolean))].sort();
   const localDate=()=>{const date=new Date(),offset=date.getTimezoneOffset();return new Date(date.getTime()-offset*60000).toISOString().slice(0,10);};
   const localTime=()=>new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":");
   const submit = async (data) => {
@@ -702,9 +1477,65 @@ function Maintenance({ go }) {
   );
   const recent = remote.data.slice(-10).reverse();
   return <>
-    <div className="stats-grid three"><Stat icon={CalendarDays} label="Catatan perawatan" value={remote.loading ? "…" : remote.data.length} detail="Seluruh data" tone="blue" /><Stat icon={CheckCircle2} label="Terealisasi" value={remote.loading ? "…" : recent.length} detail="Data terbaru" tone="mint" /><Stat icon={AlertTriangle} label="Sumber data" value="Live" detail="Google Spreadsheet" tone="amber" /></div>
-    <div className="split-actions"><button className="choice-card" onClick={() => go("schedule")}><span className="icon-box blue"><CalendarDays /></span><div><b>Lihat jadwal</b><small>Kalender perawatan seluruh aset</small></div><ArrowRight /></button><button className="choice-card" onClick={() => go("maintenanceForm")}><span className="icon-box mint"><ClipboardCheck /></span><div><b>Isi perawatan</b><small>Rekam aktivitas yang dikerjakan</small></div><ArrowRight /></button></div>
+    <div className="stats-grid three"><Stat icon={CalendarDays} label="Catatan perawatan" value={remote.loading ? "…" : remote.data.length} detail="Seluruh data" tone="blue" /><Stat icon={CheckCircle2} label="Terealisasi" value={remote.loading ? "…" : recent.length} detail="Data terbaru" tone="mint" /><Stat icon={AlertTriangle} label="Sumber data" value="Live" detail="Neon PostgreSQL" tone="amber" /></div>
+    <div className="split-actions maintenance-actions"><button className="choice-card" onClick={() => go("schedule")}><span className="icon-box blue"><CalendarDays /></span><div><b>Lihat jadwal</b><small>Kalender perawatan seluruh aset</small></div><ArrowRight /></button><button className="choice-card" onClick={() => go("maintenanceForm")}><span className="icon-box mint"><ClipboardCheck /></span><div><b>Isi perawatan</b><small>Rekam aktivitas yang dikerjakan</small></div><ArrowRight /></button><button className="choice-card" onClick={() => go("maintenancePrint")}><span className="icon-box violet"><Printer /></span><div><b>Cetak checklist</b><small>Dua laporan dalam satu PDF</small></div><ArrowRight /></button></div>
     <Panel title="Aktual perawatan terbaru"><RemoteState loading={remote.loading} error={remote.error} empty={!recent.length} onRetry={remote.reload} /><div className="maintenance-list">{recent.map((m,i) => <div key={`${m.nama_mesin}-${m.tanggal}-${i}`}><span className="machine-icon"><Wrench /></span><div><b>{m.nama_mesin || m.nama || "-"}</b><small>{m.jenis_perawatan || m.waktu || "-"}</small></div><span>{m.tanggal}</span><Badge text="Selesai" /><button onClick={() => go("maintenanceForm")}>Isi lagi</button></div>)}</div></Panel>
+  </>;
+}
+
+const EMPTY_MAINTENANCE_PRINT_FILTER={jenis:"",nama_mesin:"",perawatan:"",year:"",month:"",recordId:"",note:""};
+
+function MaintenancePrintSelector({number,rows,kategori,value,onChange,otherRecordId}){
+  const options=maintenancePrintOptions(rows,{kategori,...value});
+  const record=rows.find(row=>row.id===value.recordId)||null;
+  const select=(key,next)=>{
+    const order=["jenis","nama_mesin","perawatan","year","month","recordId"],index=order.indexOf(key);
+    const updated={...value,[key]:next};
+    order.slice(index+1).forEach(field=>{updated[field]="";});
+    onChange(updated);
+  };
+  const dateLabel=row=>`${String(row.date.day).padStart(2,"0")} ${MAINTENANCE_PRINT_MONTHS[row.date.month-1]} ${row.date.year}`;
+  const summary=record?conditionSummary(record.checks):null;
+  return <section className="maintenance-print-selector">
+    <div className="maintenance-print-selector-head"><span>{number}</span><div><p className="eyebrow">Pilihan laporan</p><h3>Checklist perawatan {number}</h3></div>{record&&<CheckCircle2 size={20}/>}</div>
+    <div className="maintenance-print-fields">
+      <label><span>Jenis</span><select value={value.jenis} onChange={event=>select("jenis",event.target.value)} disabled={!kategori}><option value="">Pilih jenis</option>{options.jenis.map(item=><option key={item}>{item}</option>)}</select></label>
+      <label><span>Nama mesin / armada</span><select value={value.nama_mesin} onChange={event=>select("nama_mesin",event.target.value)} disabled={!value.jenis}><option value="">Pilih nama</option>{options.nama_mesin.map(item=><option key={item}>{item}</option>)}</select></label>
+      <label><span>Perawatan</span><select value={value.perawatan} onChange={event=>select("perawatan",event.target.value)} disabled={!value.nama_mesin}><option value="">Pilih perawatan</option>{options.perawatan.map(item=><option key={item}>{item}</option>)}</select></label>
+      <label><span>Tahun</span><select value={value.year} onChange={event=>select("year",event.target.value)} disabled={!value.perawatan}><option value="">Pilih tahun</option>{options.years.map(item=><option key={item} value={item}>{item}</option>)}</select></label>
+      <label><span>Bulan</span><select value={value.month} onChange={event=>select("month",event.target.value)} disabled={!value.year}><option value="">Pilih bulan</option>{options.months.map(item=><option key={item} value={item}>{MAINTENANCE_PRINT_MONTHS[item-1]}</option>)}</select></label>
+      <label><span>Tanggal yang tersedia</span><select value={value.recordId} onChange={event=>select("recordId",event.target.value)} disabled={!value.month}><option value="">Pilih tanggal</option>{options.records.map(item=><option key={item.id} value={item.id} disabled={item.id===otherRecordId}>{dateLabel(item)}{item.id===otherRecordId?" · sudah dipilih":""}</option>)}</select></label>
+    </div>
+    {record&&<div className="maintenance-print-record"><div><b>{record.nama_mesin}</b><small>{dateLabel(record)} · {record.perawatan}</small></div><span><b>{record.checks.length}</b><small>item</small></span><span className="good"><b>{summary.goodPercent}%</b><small>bagus</small></span><span className="repair"><b>{summary.repairPercent}%</b><small>perbaikan</small></span></div>}
+    <label className="maintenance-print-note"><span>Keterangan untuk laporan {number}</span><textarea value={value.note} onChange={event=>onChange({...value,note:event.target.value})} maxLength={400} placeholder="Isi keterangan yang akan dicetak pada PDF..." disabled={!record}/><small>Keterangan hanya dipakai pada PDF dan tidak mengubah data perawatan.</small></label>
+  </section>;
+}
+
+function MaintenancePrint({notify,go}){
+  const remote=useRemoteData(async()=>normalizeMaintenancePrintRows(asArray(await apiGet(ENDPOINTS.maintenance,{action:"getPrintData"},{cache:false,timeout:90000}))));
+  const [kategori,setKategori]=useState("");
+  const [filters,setFilters]=useState([{...EMPTY_MAINTENANCE_PRINT_FILTER},{...EMPTY_MAINTENANCE_PRINT_FILTER}]);
+  const [printedOn,setPrintedOn]=useState(()=>new Date().toISOString().slice(0,10));
+  const [generating,setGenerating]=useState(false),[error,setError]=useState("");
+  const categories=maintenancePrintOptions(remote.data).kategori;
+  useEffect(()=>{if(!kategori&&categories.length===1)setKategori(categories[0]);},[kategori,categories.join("|")]);
+  const changeCategory=value=>{setKategori(value);setFilters([{...EMPTY_MAINTENANCE_PRINT_FILTER},{...EMPTY_MAINTENANCE_PRINT_FILTER}]);setError("");};
+  const selected=filters.map(filter=>remote.data.find(row=>row.id===filter.recordId)||null);
+  const generate=async()=>{
+    setGenerating(true);setError("");
+    try{await downloadMaintenanceChecklistPdf({first:{...selected[0],printNote:filters[0].note},second:{...selected[1],printNote:filters[1].note},printedOn});notify?.("PDF checklist perawatan berhasil dibuat.");}
+    catch(reason){setError(reason?.message||"PDF checklist gagal dibuat.");}
+    finally{setGenerating(false);}
+  };
+  return <>
+    <div className="maintenance-print-intro"><div><p className="eyebrow">Format F.K3.1.04 · revisi 02</p><h2>Cetak dua checklist dalam satu PDF</h2><p>Dropdown hanya menampilkan kombinasi yang benar-benar memiliki data. Kedua laporan boleh berbeda jenis, nama, periode, atau tanggal, tetapi wajib memakai kategori yang sama.</p></div><button className="secondary" onClick={()=>go("maintenance")}><ArrowLeft size={17}/> Kembali</button></div>
+    <RemoteState loading={remote.loading} error={remote.error} empty={!remote.loading&&!remote.data.length} onRetry={remote.reload}/>
+    {!remote.loading&&!remote.error&&remote.data.length>0&&<>
+      <Panel title="Pengaturan dokumen" className="maintenance-print-settings"><div className="maintenance-print-main-fields"><label><span>Kategori bersama</span><select value={kategori} onChange={event=>changeCategory(event.target.value)}><option value="">Pilih kategori</option>{categories.map(item=><option key={item}>{item}</option>)}</select><small>Kategori ini berlaku untuk kedua laporan.</small></label><label><span>Tanggal cetak / tanda tangan</span><input type="date" value={printedOn} onChange={event=>setPrintedOn(event.target.value)}/><small>Diisi otomatis dengan tanggal hari ini.</small></label></div></Panel>
+      <div className="maintenance-print-grid">{filters.map((filter,index)=><MaintenancePrintSelector key={index} number={index+1} rows={remote.data} kategori={kategori} value={filter} otherRecordId={filters[index?0:1].recordId} onChange={next=>setFilters(current=>current.map((item,itemIndex)=>itemIndex===index?next:item))}/>)}</div>
+      {error&&<div className="remote-error"><AlertTriangle size={17}/><span>{error}</span></div>}
+      <div className="maintenance-print-footer"><div><ShieldCheck size={18}/><span><b>Output hanya PDF</b><small>Data tidak diubah dan tidak membuat file Excel baru.</small></span></div><button className="primary" onClick={generate} disabled={generating||!selected[0]||!selected[1]||selected[0]?.id===selected[1]?.id}>{generating?<><span className="spinner"/>Membuat PDF…</>:<><Printer size={18}/> Unduh PDF</>}</button></div>
+    </>}
   </>;
 }
 
@@ -939,6 +1770,55 @@ function KPI({ go }) {
   </>;
 }
 
+function MaintenanceKpiPage() {
+  const ordersRemote = useRemoteData(async () =>
+    asArray(await apiGet(
+      ENDPOINTS.orders,
+      { action:"getAllOrders", includeClosed:"1" },
+      { timeout:90000 }
+    )).map(normalizeOrder)
+  );
+  const maintenanceRemote = useRemoteData(async () =>
+    asArray(await apiGet(
+      ENDPOINTS.maintenance,
+      { action:"getPerawatan" },
+      { timeout:90000 }
+    ))
+  );
+  const repairsRemote = useRemoteData(async () => {
+    const rows=asArray(await apiGet(
+      ENDPOINTS.jobs,
+      { action:"getDataLapKerja", bulan:"", tglAwal:"", tglAkhir:"" },
+      { timeout:90000 }
+    ));
+    const primary=rows.filter(report=>String(report.sheetName||"").trim().toLowerCase()==="lap_kerja");
+    return primary.length?primary:rows;
+  });
+  const loading = ordersRemote.loading || maintenanceRemote.loading || repairsRemote.loading;
+  const error = ordersRemote.error || maintenanceRemote.error || repairsRemote.error;
+  const reload = () => {
+    ordersRemote.reload();
+    maintenanceRemote.reload();
+    repairsRemote.reload();
+  };
+
+  return <>
+    <div className="kpi-toolbar">
+      <div><span className="eyebrow">RBKIC maintenance metrics</span><b>Analisis work order dan preventive maintenance</b></div>
+      <button className="secondary small" onClick={reload}><Activity size={16}/> Muat ulang</button>
+    </div>
+    <RemoteState
+      loading={loading}
+      error={error}
+      empty={!loading && !error && !ordersRemote.data.length && !maintenanceRemote.data.length && !repairsRemote.data.length}
+      onRetry={reload}
+    />
+    {!loading && !error &&
+      <MaintenanceKpiPanel orders={ordersRemote.data} maintenance={maintenanceRemote.data} repairRecords={repairsRemote.data}/>
+    }
+  </>;
+}
+
 function KPIDetail({ kind }) {
   return kind === "Perawatan" ? <MaintenanceKpiDetail /> : <DowntimeKpiDetail />;
 }
@@ -952,6 +1832,8 @@ const MONTH_ALIASES = {
 };
 
 function monthName(value) {
+  const numeric=Number(value);
+  if (Number.isInteger(numeric) && numeric>=1 && numeric<=12) return SCHEDULE_MONTHS[numeric-1];
   const found = Object.entries(MONTH_ALIASES).find(([, aliases]) => aliases.includes(String(value)));
   return found?.[0] || value || "-";
 }
@@ -1119,25 +2001,145 @@ function Treemap({ title,data }) {
   return <Panel title={title} className="treemap-panel"><div className="kpi-treemap">{!data.length && <div className="chart-empty">Tidak ada data untuk filter ini.</div>}{data.map(([name,value],i)=><div key={name} style={{background:colors[i%colors.length],flexGrow:Math.max(1,Number(value)/total*10)}}><b>{name}</b><span>{Number(value).toFixed(1)}h</span></div>)}</div></Panel>;
 }
 
-function Electricity({ notify, go }) {
+function Electricity({ notify, go, selectedOrder, session }) {
   const live = useRemoteData(() => apiGet(ENDPOINTS.electricity));
   const prev = live.data?.prevData || {};
-  const submit = async (data) => {
-    const hH=Number(data.huhe_h), hHH=Number(data.huhe_hh), aHEH=Number(data.huar_heh), aHH=Number(data.huar_hh);
-    const kwh=(hHH-hH)*.62, kvar=aHEH-aHH, selisih=kwh-kvar;
-    const result = await apiGet(ENDPOINTS.electricity, { action:"insert", ...data, tanggal:toIdDate(data.tanggal), nilai_kwh:kwh, nilai_kvar:kvar, selisih, kesimpulan:kwh>kvar ? "AMAN":"POTENSI DENDA" });
+  const remotePanels=new Map(asArray(live.data?.panels).map(panel=>[String(panel.code||"").trim().toLowerCase(),panel]));
+  const panelDefinitions=ELECTRICITY_PANELS.map(panel=>({...remotePanels.get(panel.code),...panel}));
+  const requestedMode=selectedOrder&&Object.prototype.hasOwnProperty.call(selectedOrder,"electricityMode")
+    ? selectedOrder.electricityMode
+    : electricityQrRequest().mode;
+  const mode=ELECTRICITY_QR_MODES.includes(requestedMode)?requestedMode:"";
+  const selectedPanel=panelDefinitions.find(panel=>panel.code===mode);
+  const jakartaNow=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Jakarta",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+  const jakartaTime=()=>new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Jakarta",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date());
+  const emptyForm=()=>({tanggal:jakartaNow(),jam:jakartaTime(),huhe_h:"",huhe_hh:"",huar_hh:"",huar_heh:"",grid_pln:"",pv_plts:"",to_grid:"",cos_phi:"",petugas:session?.name||""});
+  const [form,setForm]=useState(emptyForm);
+  const [cosPhiCameraOpen,setCosPhiCameraOpen]=useState(false);
+  const [cosPhiReading,setCosPhiReading]=useState(null);
+  const update=event=>{
+    if(event.target.name==="cos_phi")setCosPhiReading(null);
+    setForm(current=>({...current,[event.target.name]:event.target.value}));
+  };
+  const isAdmin=String(session?.role||"").toLocaleLowerCase("id-ID")==="admin";
+  const officerNames=[...new Set([session?.name,...asArray(live.data?.petugas)].map(name=>String(name||"").trim()).filter(Boolean))]
+    .sort((left,right)=>left.localeCompare(right,"id-ID"));
+  const officerControl=()=>isAdmin
+    ?<select name="petugas" value={form.petugas} onChange={update} required><option value="" disabled>Pilih nama petugas</option>{officerNames.map(name=><option key={name} value={name}>{name}</option>)}</select>
+    :<input name="petugas" value={session?.name||form.petugas} readOnly required/>;
+  let assessment=null;
+  try {
+    if ([form.huhe_h,form.huhe_hh,form.huar_heh,form.huar_hh].every(value=>value!=="")) assessment=calculateElectricityAssessment(form);
+  } catch { assessment=null; }
+  const submitEnergy = async (data) => {
+    const calculated=calculateElectricityAssessment(data);
+    if (!window.confirm(`Simpan pemeriksaan dengan hasil ${calculated.conclusion}?`)) return;
+    const result = await apiPost(ENDPOINTS.electricity, { action:"insert", ...data, tanggal:toIdDate(data.tanggal) });
     if (!isSuccess(result)) throw new Error(result.message || "Data listrik gagal disimpan.");
     notify("Data pengecekan listrik disimpan dan tersinkron.");
+    setForm(emptyForm());
     live.reload();
   };
-  return <><div className="stats-grid three"><Stat icon={Zap} label="HUHE HH terakhir" value={prev.huhe_hh || "…"} detail="Data Spreadsheet" tone="mint" /><Stat icon={Gauge} label="PV PLTS terakhir" value={prev.pv_plts || "…"} detail="Data Spreadsheet" tone="blue" /><Stat icon={AlertTriangle} label="Kesimpulan" value={prev.kesimpulan || "-"} detail={prev.tanggal || "Belum ada data"} tone="amber" /></div>
-    <FormPanel title="Input pengecekan energi listrik" onSubmit={submit} submit="Simpan pemeriksaan" extra={<button type="button" className="secondary" onClick={() => go("electricityData")}><Database size={17} /> Lihat data</button>}>
-      <Field label="Tanggal"><input name="tanggal" type="date" defaultValue={new Date().toISOString().slice(0,10)} required /></Field><Field label="Jam"><input name="jam" type="time" required /></Field>
-      <Field label="HUHE H (KWH)"><input name="huhe_h" type="number" step="any" required /></Field><Field label="HUHE HH (KWH)"><input name="huhe_hh" type="number" step="any" required /></Field>
-      <Field label="HUAR HEH (KVAR)"><input name="huar_heh" type="number" step="any" required /></Field><Field label="HUAR HH (KVAR)"><input name="huar_hh" type="number" step="any" required /></Field>
-      <Field label="Grid PLN"><input name="grid_pln" type="number" step="any" /></Field><Field label="PV PLTS"><input name="pv_plts" type="number" step="any" /></Field>
-      <Field label="To Grid"><input name="to_grid" type="number" step="any" /></Field><Field label="Petugas"><input name="petugas" required /></Field>
+  const submitPanel = async (data) => {
+    const result=await apiPost(ENDPOINTS.electricity,{action:"insertPanelCosPhi",...data,panel:mode,tanggal:toIdDate(data.tanggal)});
+    if(!isSuccess(result))throw new Error(result.message||"Data cos phi gagal disimpan.");
+    notify(`Data cos phi ${selectedPanel?.name||"panel"} berhasil disimpan.`);
+    setForm(emptyForm());
+    setCosPhiReading(null);
+    live.reload();
+  };
+  if(!mode)return <>
+    <div className="electricity-location-intro"><p className="eyebrow">Pilih lokasi pemeriksaan</p><h2>Cek listrik berdasarkan QR lokasi</h2><p>Stand meter PLN menyimpan data energi dan perhitungan kVArh. Panel 1–4 hanya menyimpan pembacaan cos φ.</p></div>
+    <div className="electricity-location-grid">
+      <button type="button" onClick={()=>go("electricity",{electricityMode:"pln"})}><span className="icon-box amber"><Zap size={21}/></span><span><b>Stand meter PLN</b><small>Input kWh dan kVArh</small></span><ArrowRight size={17}/></button>
+      {panelDefinitions.map(panel=><button type="button" key={panel.code} onClick={()=>go("electricity",{electricityMode:panel.code})}><span className="icon-box violet"><Activity size={21}/></span><span><b>{panel.name}</b><small>Input data cos φ</small></span><ArrowRight size={17}/></button>)}
+    </div>
+  </>;
+  if(selectedPanel)return <>
+    <div className="stats-grid two"><Stat icon={Activity} label={`${selectedPanel.name} terakhir`} value={Number.isFinite(Number(selectedPanel.latestPowerFactor))?Number(selectedPanel.latestPowerFactor).toFixed(2):"-"} detail="Data cos φ terakhir" tone="violet"/><Stat icon={Database} label="Jenis pencatatan" value="Data saja" detail="Tidak masuk hitungan kVArh" tone="blue"/></div>
+    <FormPanel title={`Input cos φ ${selectedPanel.name}`} onSubmit={submitPanel} submit="Simpan cos φ" extra={<div className="button-row"><button type="button" className="secondary" onClick={()=>go("electricity",{electricityMode:""})}>Ganti lokasi</button><button type="button" className="secondary" onClick={()=>go("electricityData")}><Database size={17}/> Lihat data</button></div>}>
+      <Field label="Tanggal"><input name="tanggal" type="date" value={form.tanggal} onChange={update} required/></Field>
+      <Field label="Jam"><input name="jam" type="time" value={form.jam} onChange={update} required/></Field>
+      <div className="cosphi-meter-field wide">
+        <label htmlFor="panel-cos-phi">Cos φ {selectedPanel.name}</label>
+        <div><input id="panel-cos-phi" name="cos_phi" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Contoh: 0,85 atau 0.85" value={form.cos_phi} onChange={update} required/><button type="button" className="secondary" onClick={()=>setCosPhiCameraOpen(true)}><Camera size={17}/> Baca Meter</button></div>
+        {cosPhiReading&&<small className={`cosphi-meter-source ${cosPhiReading.level}`}><CheckCircle2 size={15}/> Dibaca dari meter · {cosPhiReading.state} · Confidence {cosPhiReading.confidence}%</small>}
+      </div>
+      <Field label={isAdmin?"Petugas (dapat dipilih Admin)":"Petugas (otomatis dari akun login)"} wide>{officerControl()}</Field>
+      <div className="cosphi-data-note wide"><Database size={17}/><span><b>Hanya pencatatan data</b><small>Nilai ini tidak mengubah perhitungan atau kesimpulan kVArh stand meter PLN.</small></span></div>
+    </FormPanel>
+    <CosPhiCamera open={cosPhiCameraOpen} onClose={()=>setCosPhiCameraOpen(false)} onUse={reading=>{setForm(current=>({...current,cos_phi:reading.value.toFixed(2)}));setCosPhiReading(reading);}}/>
+  </>;
+  return <><div className="stats-grid three"><Stat icon={Zap} label="HUHE HH terakhir" value={prev.huhe_hh || "…"} detail="Data Neon" tone="mint" /><Stat icon={Gauge} label="PV PLTS terakhir" value={prev.pv_plts || "…"} detail="Data Neon" tone="blue" /><Stat icon={AlertTriangle} label="Kesimpulan" value={prev.kesimpulan || "-"} detail={prev.tanggal || "Belum ada data"} tone="amber" /></div>
+    <FormPanel title="Input pengecekan energi listrik" onSubmit={submitEnergy} submit="Simpan pemeriksaan" extra={<div className="button-row"><button type="button" className="secondary" onClick={()=>go("electricity",{electricityMode:""})}>Ganti lokasi</button><button type="button" className="secondary" onClick={() => go("electricityData")}><Database size={17} /> Lihat data</button></div>}>
+      <Field label="Tanggal"><input name="tanggal" type="date" value={form.tanggal} onChange={update} required /></Field><Field label="Jam"><input name="jam" type="time" value={form.jam} onChange={update} required /></Field>
+      <Field label={`HUHE H (saat ini) · sebelumnya ${prev.huhe_h??"-"}`}><input name="huhe_h" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.huhe_h} onChange={update} required /></Field><Field label={`HUHE HH (sebelumnya) · data lalu ${prev.huhe_hh??"-"}`}><input name="huhe_hh" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.huhe_hh} onChange={update} required /></Field>
+      <Field label={`HUAR HEH (saat ini) · sebelumnya ${prev.huar_heh??"-"}`}><input name="huar_heh" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.huar_heh} onChange={update} required /></Field><Field label={`HUAR HH (sebelumnya) · data lalu ${prev.huar_hh??"-"}`}><input name="huar_hh" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.huar_hh} onChange={update} required /></Field>
+      <Field label="Grid PLN (MWh)"><input name="grid_pln" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.grid_pln} onChange={update} /></Field><Field label="PV PLTS (MWh)"><input name="pv_plts" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.pv_plts} onChange={update} /></Field>
+      <Field label="To Grid (MWh)"><input name="to_grid" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.to_grid} onChange={update} /></Field><Field label={isAdmin?"Petugas (dapat dipilih Admin)":"Petugas (otomatis dari akun login)"}>{officerControl()}</Field>
+      {assessment&&<div className={`electricity-assessment wide ${assessment.conclusion==="AMAN"?"safe":"warning"}`}><div><small>Pemakaian aktif</small><b>{assessment.activeKwh.toFixed(2)} kWh</b></div><div><small>Batas reaktif PLN (62%)</small><b>{assessment.reactiveLimitKvarh.toFixed(2)} kVArh</b></div><div><small>Pemakaian reaktif</small><b>{assessment.reactiveKvarh.toFixed(2)} kVArh</b></div><div><small>Faktor daya estimasi</small><b>{assessment.powerFactor.toFixed(2)}</b></div><span><AlertTriangle size={17}/><strong>{assessment.conclusion}</strong><small>{assessment.conclusion==="AMAN"?`Margin ${assessment.marginKvarh.toFixed(2)} kVArh`:`Kelebihan ${assessment.excessReactiveKvarh.toFixed(2)} kVArh`}</small></span><p>Indikasi interval untuk pemantauan dini. Pengenaan biaya resmi PLN mengikuti akumulasi bulanan dan golongan tarif pelanggan.</p></div>}
     </FormPanel></>;
+}
+
+function OilMonitoring({ session, notify }) {
+  const [formKey,setFormKey]=useState(0);
+  const remote=useRemoteData(()=>getOilMonitoring(session.token),[session.token]);
+  const data=remote.data?.summary?remote.data:{};
+  const summary=data.summary||{};
+  const reservoirs=asArray(data.reservoirs);
+  const history=asArray(data.history);
+  const displayDate=value=>value
+    ? new Intl.DateTimeFormat("id-ID",{day:"2-digit",month:"short",year:"numeric"}).format(new Date(`${String(value).slice(0,10)}T12:00:00`))
+    : "Belum dicek";
+  const submit=async form=>{
+    await saveOilCheck(session.token,{
+      reservoirId:form.reservoirId,
+      checkedOn:form.checkedOn,
+      levelPercent:Number(form.levelPercent),
+      refillLiters:form.refillLiters===""?null:Number(form.refillLiters),
+      oilCondition:form.oilCondition,
+      notes:form.notes
+    });
+    notify("Pemeriksaan oli berhasil disimpan ke Neon.");
+    setFormKey(value=>value+1);
+    await remote.reload();
+  };
+  return <>
+    <div className="stats-grid">
+      <Stat icon={Droplets} label="Titik oli" value={remote.loading?"…":summary.reservoir_count??0} detail="Reservoir aktif" tone="blue"/>
+      <Stat icon={AlertTriangle} label="Level kritis" value={remote.loading?"…":summary.critical_count??0} detail="Di bawah batas minimum" tone="amber"/>
+      <Stat icon={Gauge} label="Perlu perhatian" value={remote.loading?"…":summary.attention_count??0} detail="Mendekati batas minimum" tone="violet"/>
+      <Stat icon={CalendarDays} label="Terlambat dicek" value={remote.loading?"…":summary.overdue_count??0} detail="Melewati interval" tone="mint"/>
+    </div>
+    <RemoteState loading={remote.loading} error={remote.error} empty={!remote.loading&&!reservoirs.length} onRetry={remote.reload}/>
+    {!remote.loading&&!remote.error&&reservoirs.length>0&&<>
+      <div className="oil-layout">
+        <FormPanel key={formKey} title="Input pemeriksaan oli" onSubmit={submit} submit="Simpan ke Neon">
+          <Field label="Titik / reservoir oli" wide><select name="reservoirId" required defaultValue=""><option value="" disabled>Pilih titik oli</option>{reservoirs.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+          <Field label="Tanggal"><input name="checkedOn" type="date" defaultValue={new Date().toISOString().slice(0,10)} required/></Field>
+          <Field label="Level oli (%)"><input name="levelPercent" type="number" min="0" max="100" step="0.1" required/></Field>
+          <Field label="Penambahan oli (liter)"><input name="refillLiters" type="number" min="0" step="0.1"/></Field>
+          <Field label="Kondisi oli"><select name="oilCondition" defaultValue="Normal"><option>Normal</option><option>Keruh</option><option>Kotor</option><option>Bercampur air</option><option>Perlu diganti</option></select></Field>
+          <Field label="Keterangan" wide><textarea name="notes" placeholder="Catatan kebocoran, pengisian, atau tindak lanjut"/></Field>
+        </FormPanel>
+        <Panel title="Status level terbaru">
+          <div className="oil-status-list">{reservoirs.map(item=><div key={item.id}>
+            <span className={`oil-drop ${String(item.level_status||"").toLowerCase()}`}><Droplets size={18}/></span>
+            <span><b>{item.name}</b><small>{displayDate(item.checked_on)}{item.is_overdue?" / terlambat":""}</small></span>
+            <span className="oil-meter"><i><em style={{width:`${Math.max(0,Math.min(100,Number(item.level_percent||0)))}%`}}/></i><small>{item.level_percent??"-"}%{item.estimated_oil_liters!==null&&item.estimated_oil_liters!==undefined?` / ${Number(item.estimated_oil_liters).toLocaleString("id-ID",{maximumFractionDigits:1})} L`:""}</small></span>
+            <Badge text={item.level_status||"BELUM CEK"}/>
+          </div>)}</div>
+        </Panel>
+      </div>
+      <Panel title="Riwayat pemeriksaan terbaru">
+        <SimpleTable headers={["Tanggal","Titik oli","Level","Estimasi volume","Kondisi","Petugas","Status"]} rows={history.slice(0,30).map(item=>[
+          displayDate(item.checked_on),item.reservoir_name,`${Number(item.level_percent).toLocaleString("id-ID")}%`,
+          item.estimated_oil_liters===null?"-":`${Number(item.estimated_oil_liters).toLocaleString("id-ID",{maximumFractionDigits:1})} L`,
+          item.oil_condition||"-",item.checked_by||"Data lama",item.level_status
+        ])}/>
+      </Panel>
+    </>}
+  </>;
 }
 
 function Jobs({ go, session, notify }) {
@@ -1162,7 +2164,7 @@ function Jobs({ go, session, notify }) {
     const primary=rows.filter(report=>String(report.sheetName||"").trim().toLowerCase()==="lap_kerja");
     return primary.length?primary:rows;
   },[filters.year,filters.month]);
-  const isAdmin=String(session?.role||"").toLowerCase()==="admin";
+  const isAdmin=String(session?.role||"").trim().toLowerCase()==="admin";
   const capabilities=useRemoteData(async()=>isAdmin
     ? apiGet(ENDPOINTS.jobs,{action:"getCapabilities"})
     : {status:"success",capabilities:[]},[isAdmin]);
@@ -1475,10 +2477,7 @@ function ChoiceCards({name,options,value,onChange,defaultValue="",required=false
 
 function JobForm({ notify, go, session }) {
   const machines = useRemoteData(loadMachineMaster);
-  const partsRemote = useRemoteData(() => firestoreOrFallback(
-    "master_part",
-    async () => asArray(await apiGet(ENDPOINTS.partMaster, { action:"getPart" }), ["stok","parts"])
-  ));
+  const partsRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.partMaster, { action:"getPart" }), ["stok","parts"]));
   const today = useMemo(() => {
     const date = new Date();
     const offset = date.getTimezoneOffset() * 60000;
@@ -1616,17 +2615,11 @@ function JobForm({ notify, go, session }) {
         ?"Backend laporan belum mendukung tambah master part. Terapkan LaporanKerja.secure.gs versi terbaru."
         :stockResult?.message||"Part gagal ditambahkan ke database stok.");
     }
-    if (stockResult?.firestoreSynced !== true) {
-      throw new Error(
-        "Backend belum menyinkronkan Firestore. Ganti Code.gs dengan LaporanKerja.secure.gs versi 2.8, tambahkan scope Firestore, lalu terapkan deployment kembali."
-      );
-    }
     if (stockResult?.stockSynced !== true) {
       throw new Error(
         "Backend belum menambahkan part ke tab Stok. Terapkan LaporanKerja.secure.gs versi 2.8 sebagai deployment baru."
       );
     }
-    invalidateFirestoreCollection("master_part");
     await partsRemote.reload();
     setSelectedPartCategory(kategori);
     setSelectedPart(nama);
@@ -1634,11 +2627,7 @@ function JobForm({ notify, go, session }) {
     if (jenisKomponen) setWorkComponent(jenisKomponen);
     setPartSearch(`${nama} · ${ukuran}`);
     setShowAddPart(false);
-    notify(stockResult?.message||(
-      stockResult?.duplicate
-        ?"Data part berhasil disinkronkan ke Firestore dan tab Stok."
-        :"Master part berhasil ditambahkan ke Firestore, tab Part, dan tab Stok."
-    ));
+    notify(stockResult?.message||"Master part berhasil disimpan ke Neon.");
   };
 
   const submit = async (data) => {
@@ -1973,17 +2962,16 @@ function Stock({ go }) {
   const remote = useRemoteData(async () => {
     const [stockResult,masterResult] = await Promise.allSettled([
       apiGet(ENDPOINTS.stock, { action:"getStokPart", bulan:currentIndonesianMonth() }, { timeout:90000 }),
-      Promise.race([
-        getFirestoreCollection("master_part"),
-        new Promise((_,reject) => setTimeout(() => reject(new Error("Master part timeout")),20000))
-      ])
+      apiGet(ENDPOINTS.partMaster,{action:"getPart"})
     ]);
     if (stockResult.status === "rejected") throw stockResult.reason;
     const master = masterResult.status === "fulfilled" ? masterResult.value : [];
     const clean = value => String(value||"").trim().toLocaleLowerCase("id-ID").replace(/\s+/g," ");
     const exact = new Map(),byName = new Map();
     master.forEach(part => {
-      const nama=part.Nama??part.nama,ukuran=part.Ukuran??part.ukuran,kategori=part.Kategori??part.kategori;
+      const nama=Array.isArray(part)?part[1]:part.Nama??part.nama;
+      const ukuran=Array.isArray(part)?part[2]:part.Ukuran??part.ukuran;
+      const kategori=Array.isArray(part)?part[0]:part.Kategori??part.kategori;
       if (!nama || !kategori) return;
       exact.set(`${clean(nama)}|${clean(ukuran)}`,String(kategori).trim());
       if (!byName.has(clean(nama))) byName.set(clean(nama),String(kategori).trim());
@@ -2001,28 +2989,42 @@ function Stock({ go }) {
     .sort((a,b) => a.kategori.localeCompare(b.kategori,"id-ID") || String(a.nama).localeCompare(String(b.nama),"id-ID") || String(a.ukuran).localeCompare(String(b.ukuran),"id-ID"));
   const totalStock = remote.data.reduce((n,p) => n + Number(p.stok || 0), 0);
   const low = remote.data.filter(p => Number(p.stok || 0) < 10).length;
-  return <><div className="stats-grid three"><Stat icon={Boxes} label="Total jenis part" value={remote.loading ? "…" : remote.data.length} detail="Data Spreadsheet" tone="blue" /><Stat icon={Package} label="Stok tersedia" value={remote.loading ? "…" : totalStock} detail="Seluruh gudang" tone="mint" /><Stat icon={AlertTriangle} label="Di bawah 10" value={remote.loading ? "…" : low} detail="Perlu perhatian" tone="amber" /></div>
+  return <><div className="stats-grid three"><Stat icon={Boxes} label="Total jenis part" value={remote.loading ? "…" : remote.data.length} detail="Data Neon" tone="blue" /><Stat icon={Package} label="Stok tersedia" value={remote.loading ? "…" : totalStock} detail="Seluruh gudang" tone="mint" /><Stat icon={AlertTriangle} label="Di bawah 10" value={remote.loading ? "…" : low} detail="Perlu perhatian" tone="amber" /></div>
     <Panel title="Inventori spare part" action={<div className="button-row"><button className="secondary small" onClick={() => go("partRequests")}><History size={16} /> Daftar bon</button><button className="primary small" onClick={() => go("partOrder")}><Plus size={16} /> Order part</button></div>}><Toolbar query={q} setQuery={setQ}><select value={category} onChange={e=>setCategory(e.target.value)} aria-label="Sortir kategori"><option>Semua kategori</option>{categories.map(item=><option key={item}>{item}</option>)}</select></Toolbar><RemoteState loading={remote.loading} error={remote.error} empty={!filtered.length} onRetry={remote.reload} />{!remote.loading && !remote.error && filtered.length > 0 && <SimpleTable headers={["Kategori","Nama part","Ukuran / jenis","Stok","Satuan"]} rows={filtered.map(p => [p.kategori,p.nama,p.ukuran,<b className={Number(p.stok)<10 ? "low-stock" : ""}>{p.stok}</b>,p.satuan])} />}</Panel></>;
 }
 
 function PartOrder({ notify, go }) {
-  const metadata = useRemoteData(() => apiGet(ENDPOINTS.partOrder, { action:"getMetadataOrder" }));
+  const metadata = useRemoteData(async () => {
+    const [metadataResult,masterResult]=await Promise.allSettled([
+      apiGet(ENDPOINTS.partOrder,{action:"getMetadataOrder"},{timeout:45000}),
+      apiGet(ENDPOINTS.partMaster,{action:"getPart"},{timeout:45000})
+    ]);
+    const metadataValue=metadataResult.status==="fulfilled"?metadataResult.value:null;
+    const metadataStock=isSuccess(metadataValue)?asArray(metadataValue?.stok):[];
+    if (metadataStock.length) return {...metadataValue,stok:metadataStock,source:"order-part"};
+    if (masterResult.status==="fulfilled") {
+      const fallback=asArray(masterResult.value,["stok","parts"]);
+      if (fallback.length) return {status:"success",stok:fallback,source:"master-part"};
+    }
+    throw new Error("Master part dan metadata Order Part tidak tersedia.");
+  });
   const stok = asArray(metadata.data?.stok);
   const submit = async (data) => {
-    const result = await apiPost(ENDPOINTS.partOrder, { action:"submitOrder", ...data, tglPesan:toIdDate(data.tglPesan), isNewData:!stok.some(x => (Array.isArray(x) ? x[2] : x.nama) === data.nama), status:"Open" });
-    if (!isSuccess(result)) throw new Error(result.message || "Order part gagal disimpan.");
+    const result = await apiPost(ENDPOINTS.partOrder, { action:"submitOrder", ...data, tglPesan:toIdDate(data.tglPesan), isNewData:!stok.some(x => (Array.isArray(x) ? x[1] : x.nama||x.Nama) === data.nama), status:"Open" });
+    if (!isSuccess(result)) throw new Error("Backend Order Part belum siap. Periksa sheet tujuan dan deployment Apps Script Order Part.");
     notify("Order part berhasil dikirim dan tersinkron.");
     go("stock");
   };
-  return <FormPanel title="Permintaan spare part" onSubmit={submit} submit="Kirim order part">
-    <Field label="Tanggal pesan"><input name="tglPesan" type="date" defaultValue={new Date().toISOString().slice(0,10)} required /></Field><Field label="Kategori"><input name="kategori" required /></Field><Field label="Nama part"><input name="nama" list="part-options" required /><datalist id="part-options">{stok.map((x,i) => <option key={i} value={Array.isArray(x) ? x[2] : x.nama} />)}</datalist></Field><Field label="Ukuran"><input name="ukuran" /></Field><Field label="Jumlah pesan"><input name="jmlPesan" type="number" required /></Field><Field label="Satuan"><input name="satuan" /></Field><Field label="Kegunaan"><input name="kegunaan" /></Field><Field label="Mesin"><input name="mesin" /></Field><Field label="Bagian"><input name="bagian" /></Field><Field label="Pemesan"><input name="pemesan" required /></Field>
-  </FormPanel>;
+  return <><RemoteState loading={metadata.loading} error={metadata.error} onRetry={metadata.reload}/><FormPanel title="Permintaan spare part" onSubmit={submit} submit="Kirim order part">
+    <Field label="Tanggal pesan"><input name="tglPesan" type="date" defaultValue={new Date().toISOString().slice(0,10)} required /></Field><Field label="Kategori"><input name="kategori" required /></Field><Field label="Nama part"><input name="nama" list="part-options" required /><datalist id="part-options">{stok.map((x,i) => <option key={i} value={Array.isArray(x) ? x[1] : x.nama||x.Nama} />)}</datalist></Field><Field label="Ukuran"><input name="ukuran" /></Field><Field label="Jumlah pesan"><input name="jmlPesan" type="number" min="1" required /></Field><Field label="Satuan"><input name="satuan" /></Field><Field label="Kegunaan"><input name="kegunaan" /></Field><Field label="Mesin"><input name="mesin" /></Field><Field label="Bagian"><input name="bagian" /></Field><Field label="Pemesan"><input name="pemesan" required /></Field>
+  </FormPanel></>;
 }
 
 function More({ go, session, notify }) {
   const items = [
     ["users","Teknisi","Manajemen teknisi",Users,"mint", session.role === "Admin"],
-    ["transformer","Trafo","Monitoring transformator",Zap,"amber",true],
+    ["oil","Cek Oli","Level dan volume reservoir",Droplets,"blue",["Admin","Teknik"].includes(session.role)],
+    ["transformer","Trafo Las","Monitoring trafo las",Zap,"amber",true],
     ["overtime","Lemburan","Pengajuan kerja lembur",Clock3,"violet",true],
     ["overtimeRecap","Rekap Lembur","Total jam dan upah karyawan",FileBarChart,"amber",session.role === "Admin"],
     ["catalog","Katalog","Referensi produk teknik",BookOpen,"blue",true],
@@ -2032,7 +3034,7 @@ function More({ go, session, notify }) {
 }
 
 function TransformerMenu({ go }) {
-  return <div className="split-actions"><button className="choice-card large-choice" onClick={() => go("transformerForm")}><span className="icon-box amber"><ClipboardCheck /></span><div><b>Isi inspeksi</b><small>Catat kondisi, status stang, kabel, masa, dan keterangan trafo.</small></div><ArrowRight /></button><button className="choice-card large-choice" onClick={() => go("transformerData")}><span className="icon-box blue"><Database /></span><div><b>Data trafo</b><small>Lihat master transformator dan seluruh riwayat pemeriksaan.</small></div><ArrowRight /></button></div>;
+  return <div className="split-actions"><button className="choice-card large-choice" onClick={() => go("transformerForm")}><span className="icon-box amber"><ClipboardCheck /></span><div><b>Isi inspeksi</b><small>Catat kondisi, status stang, kabel, masa, dan keterangan trafo las.</small></div><ArrowRight /></button><button className="choice-card large-choice" onClick={() => go("transformerData")}><span className="icon-box blue"><Database /></span><div><b>Data trafo las</b><small>Lihat master aset transformator las.</small></div><ArrowRight /></button></div>;
 }
 
 function TransformerForm({ notify }) {
@@ -2069,7 +3071,7 @@ function Stang({ notify }) {
     const params = data.action === "pinjam"
       ? { action:"pinjam", kode:"", keluar:toIdDate(data.tanggal), namaKeluar:data.group, digunakan:data.lokasi, kembali:"", namaKembali:"", dari:"", merk:data.merk, durasi:"0", keterangan:data.keterangan }
       : { action:"kembali", kode:data.kode, keluar:"", namaKeluar:"", digunakan:"", kembali:toIdDate(data.tanggal), namaKembali:data.group, dari:data.lokasi, merk:data.merk, durasi:data.durasi || "0", keterangan:data.keterangan };
-    const result = await apiGet(ENDPOINTS.stang, params);
+    const result = await apiPost(ENDPOINTS.stang, params);
     if (!isSuccess(result)) throw new Error(result.message || "Transaksi stang gagal.");
     notify("Transaksi stang berhasil disimpan dan tersinkron.");
     remote.reload();
@@ -2105,7 +3107,14 @@ function Scanner({ go, notify }) {
     setScanning(false);
   };
   useEffect(()=>()=>stopScanner(),[]);
-  const openOrder=raw=>{
+  const openCode=raw=>{
+    const electricityMode=electricityQrRequest(raw).mode;
+    if(electricityMode){
+      stopScanner();
+      notify(electricityMode==="pln"?"Stand meter PLN ditemukan.":`${electricityMode.replace("_"," ")} ditemukan.`);
+      go("electricity",{electricityMode});
+      return;
+    }
     const name=machineNameFromScan(raw);
     if (!name) {
       setScanError("Kode tidak memuat parameter namaMesin atau mesin.");
@@ -2134,7 +3143,7 @@ function Scanner({ go, notify }) {
         if (!streamRef.current) return;
         try {
           const results=await detector.detect(video);
-          if (results.length) return openOrder(results[0].rawValue);
+          if (results.length) return openCode(results[0].rawValue);
         } catch {}
         frameRef.current=requestAnimationFrame(detect);
       };
@@ -2146,15 +3155,153 @@ function Scanner({ go, notify }) {
   };
   return <div className="scanner-card">
     <div className={`scan-frame ${scanning?"active":""}`}><span /><span /><span /><span /><video ref={videoRef} playsInline muted />{!scanning&&<QrCode size={108} />}</div>
-    <h2>Pindai kode mesin</h2>
-    <p>QR aset akan membuka formulir pembuatan order dan mengisi data mesin dari Firestore seperti alur aplikasi Android.</p>
+    <h2>Pindai QR aset</h2>
+    <p>QR mesin membuka order kerja. QR stand meter PLN atau panel listrik membuka formulir pemeriksaan yang sesuai.</p>
     {scanError&&<div className="remote-error"><AlertTriangle size={17}/><span>{scanError}</span></div>}
     <button className={scanning?"secondary wide":"primary wide"} type="button" onClick={scanning?stopScanner:startScanner}>{scanning?"Hentikan kamera":"Aktifkan kamera dan pindai"}</button>
-    <div className="manual-code"><input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={event=>event.key==="Enter"&&openOrder(code)} placeholder="Atau masukkan nama/kode mesin" /><button className="primary" onClick={() => code ? openOrder(code) : notify("Masukkan kode mesin terlebih dahulu.")}>Buka mesin</button></div>
+    <div className="manual-code"><input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={event=>event.key==="Enter"&&openCode(code)} placeholder="Masukkan nama mesin atau tautan QR" /><button className="primary" onClick={() => code ? openCode(code) : notify("Masukkan kode terlebih dahulu.")}>Buka data</button></div>
   </div>;
 }
 
-function SettingsPage({ notify,themeMode,onThemeChange }) {
+function SettingsPage({ notify,themeMode,onThemeChange,session }) {
+  const isAdmin=String(session?.role||"").trim().toLowerCase()==="admin";
+  const [backupBusy,setBackupBusy]=useState("");
+  const [backupProgress,setBackupProgress]=useState("");
+  const [backupManifest,setBackupManifest]=useState(null);
+  const [showDownloadPicker,setShowDownloadPicker]=useState(false);
+  const [downloadSelection,setDownloadSelection]=useState(()=>new Set());
+  const [importPreview,setImportPreview]=useState(null);
+  const [importSelection,setImportSelection]=useState(()=>new Set());
+  const [candidateSelection,setCandidateSelection]=useState(()=>new Set());
+  const inputRef=useRef(null);
+  const getManifest=()=>apiGet(ENDPOINTS.backup,{action:"manifest"},{cache:false,timeout:120000});
+  const toggleSelection=(setter,key)=>setter(previous=>{
+    const next=new Set(previous);
+    if(next.has(key))next.delete(key);else next.add(key);
+    return next;
+  });
+  const openDownloadPicker=async()=>{
+    if(backupManifest){setShowDownloadPicker(value=>!value);return;}
+    setBackupBusy("manifest");setBackupProgress("Mengambil daftar data...");
+    try{
+      const manifest=await getManifest();
+      setBackupManifest(manifest);setShowDownloadPicker(true);
+    }catch(error){notify(error?.message||"Daftar data gagal dimuat.");}
+    finally{setBackupBusy("");setBackupProgress("");}
+  };
+  const downloadSelected=async()=>{
+    if(!backupManifest||!downloadSelection.size){notify("Centang minimal satu data yang akan diunduh.");return;}
+    setBackupBusy("download");setBackupProgress("Menyiapkan data pilihan...");
+    try{
+      const selected=backupManifest.datasets.filter(dataset=>downloadSelection.has(dataset.key));
+      const operational=selected.filter(dataset=>dataset.operationalFormat);
+      const generic=selected.filter(dataset=>!dataset.operationalFormat);
+      const {createBackupWorkbook,createDirectBackupWorkbook,downloadWorkbook}=await import("./lib/dataWorkbook");
+      let downloaded=0;
+      for(let index=0;index<operational.length;index+=1){
+        const definition=operational[index];
+        setBackupProgress(`Membuat ${definition.label} dalam format master (${index+1}/${operational.length})...`);
+        const payload=await apiGet(ENDPOINTS.backup,{action:"direct-export",documentType:definition.operationalFormat},{cache:false,timeout:120000});
+        const file=await createDirectBackupWorkbook(definition.operationalFormat,payload);
+        downloadWorkbook(file.buffer,file.filename);downloaded+=1;
+      }
+      if(generic.length){
+        const manifest={...backupManifest,datasets:generic};
+        const buffer=await createBackupWorkbook(manifest,async key=>apiGet(ENDPOINTS.backup,{action:"export",dataset:key},{cache:false,timeout:120000}),progress=>setBackupProgress(`Mengambil ${progress.label} (${progress.current}/${progress.total})...`));
+        downloadWorkbook(buffer,`siteki-backup-${new Date().toISOString().slice(0,10)}.xlsx`);downloaded+=1;
+      }
+      notify(`${selected.length} kelompok data berhasil dibuat dalam ${downloaded} file.`);
+    }catch(error){notify(error?.message||"Backup data gagal dibuat.");}
+    finally{setBackupBusy("");setBackupProgress("");}
+  };
+  const sendImportChunk=(dataset,rows,validateOnly=false)=>apiPost(ENDPOINTS.backup,
+    dataset.importMode==="direct"
+      ?{action:"direct-import",documentType:dataset.documentType,rows,validateOnly}
+      :{action:"import",dataset:dataset.key,rows,validateOnly},
+    {timeout:120000});
+  const validateChunks=async datasets=>{
+    const totals={checked:0,inserted:0,skipped:0,unmatchedMachines:0,unmatchedParts:0,timeAnomalies:0,durationAnomalies:0,candidateRows:[]};
+    for(const dataset of datasets){
+      const chunkSize=dataset.importMode==="direct"?100:250;
+      for(let start=0;start<dataset.rows.length;start+=chunkSize){
+        setBackupProgress(`Memvalidasi ${dataset.label} (${Math.min(start+chunkSize,dataset.rows.length)}/${dataset.rows.length})...`);
+        const result=await sendImportChunk(dataset,dataset.rows.slice(start,start+chunkSize),true);
+        totals.inserted+=Number(result.inserted||0);totals.skipped+=Number(result.skipped||0);
+        totals.unmatchedMachines+=Number(result.warnings?.unmatchedMachines||0);
+        totals.unmatchedParts+=Number(result.warnings?.unmatchedParts||0);
+        totals.timeAnomalies+=Number(result.warnings?.timeAnomalies||0);
+        totals.durationAnomalies+=Number(result.warnings?.durationAnomalies||0);
+        if(Array.isArray(result.candidateRows))totals.candidateRows.push(...result.candidateRows);
+      }
+      totals.checked+=dataset.rows.length;
+    }
+    return totals;
+  };
+  const chooseWorkbook=async event=>{
+    const file=event.target.files?.[0];
+    event.target.value="";
+    if(!file)return;
+    setBackupBusy("validate");setImportPreview(null);setBackupProgress("Membaca workbook...");
+    try{
+      const manifest=await getManifest();
+      setBackupManifest(manifest);
+      const {parseBackupWorkbook}=await import("./lib/dataWorkbook");
+      let parsed;
+      try{parsed=await parseBackupWorkbook(file,manifest);}
+      catch(error){
+        if(!/bukan workbook backup SiTeki/i.test(error?.message||""))throw error;
+        const {parseDirectWorkbook}=await import("./lib/directWorkbook");
+        parsed=await parseDirectWorkbook(file);
+      }
+      let oldRows,candidates,warnings=null;
+      if(parsed.kind==="direct"){
+        const validation=await validateChunks(parsed.datasets);
+        oldRows=validation.skipped;candidates=validation.inserted;
+        warnings={...parsed.warnings,unmatchedMachines:validation.unmatchedMachines,
+          unmatchedParts:validation.unmatchedParts,timeAnomalies:validation.timeAnomalies,
+          durationAnomalies:validation.durationAnomalies};
+        parsed.candidateRows=validation.candidateRows;
+      }else{
+        oldRows=parsed.datasets.reduce((total,dataset)=>total+dataset.rows.filter(row=>dataset.keyColumns.length===1&&dataset.keyColumns[0]==="id"&&row.id!==null&&row.id!=="").length,0);
+        candidates=parsed.totalRows-oldRows;
+      }
+      setImportSelection(new Set(parsed.datasets.map(dataset=>dataset.key)));
+      setCandidateSelection(new Set((parsed.candidateRows||[]).map(row=>String(row.source_row))));
+      setImportPreview({...parsed,oldRows,candidates,warnings});
+      notify(parsed.kind==="direct"?`${parsed.datasets[0].label} dikenali otomatis. Periksa pratinjau sebelum mengunggah.`:"Workbook berhasil dibaca. Pilih sheet yang akan diunggah.");
+    }catch(error){notify(error?.message||"Workbook tidak dapat dibaca.");}
+    finally{setBackupBusy("");setBackupProgress("");}
+  };
+  const applyWorkbook=async()=>{
+    if(!importPreview)return;
+    const datasets=importPreview.datasets.filter(dataset=>importSelection.has(dataset.key)).map(dataset=>
+      dataset.importMode==="direct"
+        ?{...dataset,rows:dataset.rows.filter(row=>candidateSelection.has(String(row.source_row)))}
+        :dataset
+    );
+    if(!datasets.length){notify("Centang minimal satu sheet yang akan diunggah.");return;}
+    if(datasets.some(dataset=>!dataset.rows.length)){notify("Centang minimal satu kandidat data baru yang akan dimasukkan.");return;}
+    const selectedRows=datasets.reduce((total,dataset)=>total+dataset.rows.length,0);
+    if(!window.confirm(importPreview.kind==="direct"?`Masukkan ${selectedRows} data baru yang dicentang?`:`Masukkan data baru dari ${datasets.length} sheet terpilih? Data lama dan duplikat akan dilewati.`))return;
+    setBackupBusy("import");
+    let inserted=0,skipped=0;
+    try{
+      await validateChunks(datasets);
+      for(const dataset of datasets){
+        const chunkSize=dataset.importMode==="direct"?100:250;
+        for(let start=0;start<dataset.rows.length;start+=chunkSize){
+          setBackupProgress(`Menyimpan ${dataset.label} (${Math.min(start+chunkSize,dataset.rows.length)}/${dataset.rows.length})...`);
+          const result=await sendImportChunk(dataset,dataset.rows.slice(start,start+chunkSize));
+          inserted+=Number(result.inserted||0);skipped+=Number(result.skipped||0);
+        }
+      }
+      setImportPreview(null);
+      setImportSelection(new Set());
+      setCandidateSelection(new Set());
+      notify(`${inserted.toLocaleString("id-ID")} data baru masuk; ${skipped.toLocaleString("id-ID")} data lama/duplikat dilewati.`);
+    }catch(error){notify(`${error?.message||"Impor gagal."} ${inserted?`${inserted.toLocaleString("id-ID")} data baru sebelumnya sudah masuk.`:""}`);}
+    finally{setBackupBusy("");setBackupProgress("");}
+  };
   return <Panel title="Preferensi">
     <div className="theme-setting">
       <div><p className="eyebrow">Tema antarmuka</p><h3>Pilih tampilan SiTeki</h3><small>Preferensi tersimpan otomatis pada perangkat ini.</small></div>
@@ -2164,6 +3311,29 @@ function SettingsPage({ notify,themeMode,onThemeChange }) {
       </div>
     </div>
     <div className="settings-list">{[["Notifikasi order kerja","Aktifkan pemberitahuan order baru"],["Pengingat perawatan","Notifikasi jadwal mendatang"],["Mode ringkas tabel","Tampilkan lebih banyak baris"]].map(([a,b],i) => <label key={a}><span><b>{a}</b><small>{b}</small></span><input type="checkbox" defaultChecked={i < 2} /></label>)}<button className="primary" onClick={() => notify("Pengaturan berhasil disimpan.")}>Simpan pengaturan</button></div>
+    <section className="backup-settings">
+      <div className="backup-heading"><span className="icon-box mint"><Database size={20}/></span><div><p className="eyebrow">Khusus administrator</p><h3>Download & impor data pilihan</h3><small>Pilih kelompok data agar proses download dan upload lebih cepat.</small></div></div>
+      <div className="backup-rules"><ShieldCheck size={17}/><span>Impor hanya memasukkan data baru. Baris lama yang memiliki ID dan data yang terdeteksi duplikat akan dilewati tanpa mengubah database.</span></div>
+      {isAdmin?<><div className="backup-actions">
+        <button type="button" className="secondary" onClick={openDownloadPicker} disabled={!!backupBusy}><Download size={17}/>{backupBusy==="manifest"?"Memuat...":showDownloadPicker?"Tutup pilihan download":"Pilih data untuk download"}</button>
+        <button type="button" className="primary" onClick={()=>inputRef.current?.click()} disabled={!!backupBusy}><FilePlus2 size={17}/>{backupBusy==="validate"?"Membaca...":"Pilih file untuk upload"}</button>
+        <input ref={inputRef} className="backup-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={chooseWorkbook}/>
+      </div>
+      {showDownloadPicker&&backupManifest&&<div className="backup-picker">
+        <div className="backup-picker-head"><div><b>Pilih data yang akan di-download</b><small>{downloadSelection.size} dari {backupManifest.datasets.length} dipilih</small></div><div><button type="button" onClick={()=>setDownloadSelection(new Set(backupManifest.datasets.map(dataset=>dataset.key)))}>Pilih semua</button><button type="button" onClick={()=>setDownloadSelection(new Set())}>Kosongkan</button></div></div>
+        <div className="backup-dataset-grid">{backupManifest.datasets.map(dataset=><label key={dataset.key} className={downloadSelection.has(dataset.key)?"selected":""}><input type="checkbox" checked={downloadSelection.has(dataset.key)} onChange={()=>toggleSelection(setDownloadSelection,dataset.key)}/><span><b>{dataset.label}</b><small>{Number(dataset.count||0).toLocaleString("id-ID")} baris{dataset.operationalFormat?" · format master siap upload":""}</small></span></label>)}</div>
+        <button type="button" className="primary backup-confirm" onClick={downloadSelected} disabled={!downloadSelection.size||!!backupBusy}><Download size={16}/>Download {downloadSelection.size} data pilihan</button>
+      </div>}
+      {backupProgress&&<div className="backup-progress"><span className="spinner dark"/>{backupProgress}</div>}
+      {importPreview&&<div className="backup-preview">
+        <div className="backup-preview-title"><b>{importPreview.filename}</b><small>{importPreview.kind==="direct"?`${importPreview.datasets[0]?.label||"Dokumen"} dikenali otomatis dari nama file, sheet, dan judul kolom.`:"Pilih sheet yang akan diproses."} Data lama tidak akan ditimpa.</small>{importPreview.warnings?.duplicatesInFile>0&&<small className="backup-warning">{importPreview.warnings.duplicatesInFile.toLocaleString("id-ID")} baris identik di dalam file dilewati otomatis agar laporan dan KPI tidak terhitung ganda.</small>}{importPreview.warnings?.unmatchedMachines>0&&<small className="backup-warning">{importPreview.warnings.unmatchedMachines.toLocaleString("id-ID")} baris memakai nama mesin yang belum cocok dengan master; data tetap dapat disimpan tanpa relasi master.</small>}{importPreview.warnings?.unmatchedParts>0&&<small className="backup-warning">{importPreview.warnings.unmatchedParts.toLocaleString("id-ID")} baris memakai part yang belum cocok dengan master; laporan tetap tersimpan tanpa relasi part.</small>}{importPreview.warnings?.timeAnomalies>0&&<small className="backup-warning">{importPreview.warnings.timeAnomalies.toLocaleString("id-ID")} baris memiliki jam selesai sebelum jam mulai dan akan ditandai sebagai anomali sumber.</small>}{importPreview.warnings?.durationAnomalies>0&&<small className="backup-warning">{importPreview.warnings.durationAnomalies.toLocaleString("id-ID")} baris memiliki Total Jam yang berbeda dari selisih waktu dan akan ditandai sebagai anomali sumber.</small>}</div>
+        <div className="backup-counts"><span><b>{importPreview.oldRows.toLocaleString("id-ID")}</b><small>jelas data lama</small></span><span><b>{importPreview.candidates.toLocaleString("id-ID")}</b><small>kandidat baru</small></span></div>
+        <div className="backup-import-picker">{importPreview.datasets.map(dataset=><label key={dataset.key} className={importSelection.has(dataset.key)?"selected":""}><input type="checkbox" checked={importSelection.has(dataset.key)} onChange={()=>toggleSelection(setImportSelection,dataset.key)}/><span><b>{dataset.label}</b><small>{dataset.rows.length.toLocaleString("id-ID")} baris</small></span></label>)}</div>
+        {importPreview.kind==="direct"&&importPreview.candidateRows?.length>0&&<div className="backup-candidate-list"><div><b>Data baru yang akan dimasukkan</b><small>{candidateSelection.size} dari {importPreview.candidateRows.length} dipilih</small></div>{importPreview.candidateRows.map((row,index)=><label key={`${row.inspected_on||row.report_date}-${row.machine_name}-${index}`} className={candidateSelection.has(String(row.source_row))?"selected":""}><input type="checkbox" checked={candidateSelection.has(String(row.source_row))} onChange={()=>toggleSelection(setCandidateSelection,String(row.source_row))}/><strong>{row.inspected_on||row.report_date}</strong><em>{row.machine_name}</em><small>{row.schedule_code||row.work_description||""}{row.source_row?` · baris ${row.source_row}`:""}</small></label>)}</div>}
+        <button type="button" className="primary" onClick={applyWorkbook} disabled={!importSelection.size||(importPreview.kind==="direct"&&!candidateSelection.size)||!!backupBusy}>{backupBusy==="import"?"Mengunggah...":importPreview.kind==="direct"?`Masukkan ${candidateSelection.size} data baru`:`Masukkan data baru dari ${importSelection.size} sheet`}</button>
+        <button type="button" className="secondary" onClick={()=>{setImportPreview(null);setCandidateSelection(new Set());}} disabled={!!backupBusy}>Batal</button>
+      </div>}</>:<div className="backup-locked"><ShieldCheck size={17}/><span>Masuk menggunakan akun dengan role Admin untuk menggunakan backup dan impor.</span></div>}
+    </section>
   </Panel>;
 }
 
@@ -2192,7 +3362,10 @@ const toDateInput = value => {
 function OvertimeEntry({ session, notify }) {
   const now=new Date();
   const initialCutoff=new Date(now);
-  if (now.getDate()<22) initialCutoff.setMonth(initialCutoff.getMonth()-1);
+  if (now.getDate()>=22) {
+    initialCutoff.setDate(1);
+    initialCutoff.setMonth(initialCutoff.getMonth()+1);
+  }
   const [year,setYear]=useState(initialCutoff.getFullYear());
   const [month,setMonth]=useState(initialCutoff.getMonth()+1);
   const [selected,setSelected]=useState("");
@@ -2202,23 +3375,49 @@ function OvertimeEntry({ session, notify }) {
   const [formError,setFormError]=useState("");
   const remote=useRemoteData(async ()=>{
     if (!session.token) throw new Error("Sesi aman tidak tersedia. Silakan logout dan login kembali.");
-    const result=await apiPost(ENDPOINTS.users,{action:"getOvertimeCalendar",token:session.token,year,month},{timeout:90000});
-    if (!isSuccess(result)) throw new Error(result.message||"Kalender lembur tidak dapat dibuka.");
-    return result;
+    const startMonth=month===1?12:month-1;
+    const startYear=month===1?year-1:year;
+    const [startResult,endResult]=await Promise.all([
+      apiPost(ENDPOINTS.users,{action:"getOvertimeCalendar",token:session.token,year:startYear,month:startMonth},{timeout:90000}),
+      apiPost(ENDPOINTS.users,{action:"getOvertimeCalendar",token:session.token,year,month},{timeout:90000})
+    ]);
+    if (!isSuccess(startResult)) throw new Error(startResult.message||"Kalender awal periode lembur tidak dapat dibuka.");
+    if (!isSuccess(endResult)) throw new Error(endResult.message||"Kalender akhir periode lembur tidak dapat dibuka.");
+    const cutoff=startResult.cutoff||{};
+    const inCutoff=item=>!cutoff.tanggalAwal||!cutoff.tanggalAkhir||
+      (item?.tanggal>=cutoff.tanggalAwal&&item?.tanggal<=cutoff.tanggalAkhir);
+    const uniqueByDate=items=>Array.from(new Map(items.filter(inCutoff).map(item=>[item.tanggal,item])).values());
+    return {
+      ...startResult,
+      data:uniqueByDate([...asArray(startResult),...asArray(endResult)]),
+      holidays:uniqueByDate([...asArray(startResult?.holidays),...asArray(endResult?.holidays)]),
+      cutoff
+    };
   },[session.token,year,month]);
   const entries=asArray(remote.data);
   const entryMap=useMemo(()=>new Map(entries.map(item=>[item.tanggal,item])),[entries]);
   const holidayMap=useMemo(()=>new Map(asArray(remote.data?.holidays).map(item=>[item.tanggal,item.nama])),[remote.data]);
   const cutoff=remote.data?.cutoff||{};
-  const daysInMonth=new Date(year,month,0).getDate();
-  const leading=(new Date(year,month-1,1).getDay()+6)%7;
+  const cutoffDates=useMemo(()=>{
+    const fallbackEnd=new Date(year,month-1,21,12);
+    const fallbackStart=new Date(year,month-2,22,12);
+    const parse=value=>/^\d{4}-\d{2}-\d{2}$/.test(String(value||""))?new Date(`${value}T12:00:00`):null;
+    const start=parse(cutoff.tanggalAwal)||fallbackStart;
+    const end=parse(cutoff.tanggalAkhir)||fallbackEnd;
+    const dates=[];
+    for(let current=new Date(start);current<=end;current.setDate(current.getDate()+1)) dates.push(new Date(current));
+    return dates;
+  },[year,month,cutoff.tanggalAwal,cutoff.tanggalAkhir]);
+  const leading=cutoffDates.length?(cutoffDates[0].getDay()+6)%7:0;
+  const trailing=(7-(leading+cutoffDates.length)%7)%7;
   const money=value=>new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(value||0));
   const shortDate=value=>value?new Intl.DateTimeFormat("id-ID",{day:"numeric",month:"short",year:"numeric"}).format(new Date(`${value}T12:00:00`)):"-";
-  const cutoffLabel=cutoff.tanggalAwal&&cutoff.tanggalAkhir?`${shortDate(cutoff.tanggalAwal)} – ${shortDate(cutoff.tanggalAkhir)}`:`22 ${SCHEDULE_MONTHS[month-1]} – 21 bulan berikutnya`;
-  const years=Array.from(new Set([2024,2025,2026,now.getFullYear(),now.getFullYear()+1])).sort((a,b)=>b-a);
-  const dateKey=day=>`${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-  const openDay=day=>{
-    const key=dateKey(day),existing=entryMap.get(key);
+  const cutoffLabel=cutoff.tanggalAwal&&cutoff.tanggalAkhir?`${shortDate(cutoff.tanggalAwal)} – ${shortDate(cutoff.tanggalAkhir)}`:`22 ${SCHEDULE_MONTHS[(month+10)%12]} – 21 ${SCHEDULE_MONTHS[month-1]} ${year}`;
+  const years=Array.from({length:Math.max(1,now.getFullYear()-2022)},(_,index)=>2024+index).reverse();
+  const dateKey=date=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+  const todayKey=dateKey(now);
+  const openDay=key=>{
+    const existing=entryMap.get(key);
     setSelected(key);setHours(existing?.jam??"");setNote(existing?.keterangan??"");setFormError("");
   };
   const close=()=>{setSelected("");setHours("");setNote("");setFormError("");};
@@ -2249,38 +3448,41 @@ function OvertimeEntry({ session, notify }) {
       <Stat icon={Clock3} label="Total jam lembur" value={remote.loading?"…":`${Number(cutoff.totalJam||0).toLocaleString("id-ID",{maximumFractionDigits:2})} jam`} detail={cutoffLabel} tone="mint"/>
       <Stat icon={FileBarChart} label="Total upah" value={remote.loading?"…":money(cutoff.totalUpah)} detail={cutoffLabel} tone="amber"/>
     </div>
-    <Panel title="Kalender Lemburan" action={<div className="overtime-filters"><select value={month} onChange={e=>{setMonth(Number(e.target.value));close();}}>{SCHEDULE_MONTHS.map((name,index)=><option key={name} value={index+1}>{name}</option>)}</select><select value={year} onChange={e=>{setYear(Number(e.target.value));close();}}>{years.map(value=><option key={value}>{value}</option>)}</select></div>}>
+    <Panel title="Kalender Lemburan" action={<div className="overtime-filters"><label><span>Periode bulan</span><select value={month} onChange={e=>{setMonth(Number(e.target.value));close();}}>{SCHEDULE_MONTHS.map((name,index)=><option key={name} value={index+1}>{name}</option>)}</select></label><label><span>Tahun</span><select value={year} onChange={e=>{setYear(Number(e.target.value));close();}}>{years.map(value=><option key={value}>{value}</option>)}</select></label></div>}>
       <div className="overtime-calendar-note"><ShieldCheck size={15}/><span>Klik tanggal untuk mengisi lembur. Ringkasan mengikuti cutoff <b>{cutoffLabel}</b>. Hari Minggu dan libur nasional dihitung sebagai <b>Hari Besar</b>.</span></div>
       <RemoteState loading={remote.loading} error={remote.error} onRetry={remote.reload}/>
       {!remote.loading&&!remote.error&&<div className="overtime-calendar">
         <div className="overtime-weekdays">{["Sen","Sel","Rab","Kam","Jum","Sab","Min"].map(day=><b key={day}>{day}</b>)}</div>
         <div className="overtime-days">
           {Array.from({length:leading},(_,index)=><span className="empty-day" key={`empty-${index}`}/>)}
-          {Array.from({length:daysInMonth},(_,index)=>{
-            const day=index+1,key=dateKey(day),entry=entryMap.get(key),holiday=holidayMap.get(key);
-            const today=key===`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+          {cutoffDates.map(date=>{
+            const day=date.getDate(),key=dateKey(date),entry=entryMap.get(key),holiday=holidayMap.get(key);
+            const today=key===todayKey;
             const entryNote=String(entry?.keterangan||"").trim();
-            return <button key={key} className={`${holiday?"holiday":""} ${entry?"has-entry":""} ${today?"today":""}`} onClick={()=>openDay(day)} title={entryNote||undefined}>
-              <div className="overtime-day-head"><span>{day}</span>{entryNote&&<em>{entryNote}</em>}</div>
+            return <button key={key} className={`${holiday?"holiday":""} ${entry?"has-entry":""} ${today?"today":""}`} onClick={()=>openDay(key)} title={entryNote||undefined}>
+              <div className="overtime-day-head"><span>{day}<i>{new Intl.DateTimeFormat("id-ID",{month:"short"}).format(date)}</i></span>{entryNote&&<em>{entryNote}</em>}</div>
               {holiday&&<small>{holiday}</small>}
               {entry&&<div className="overtime-entry"><strong>{Number(entry.jam).toLocaleString("id-ID")} jam</strong></div>}
             </button>;
           })}
+          {Array.from({length:trailing},(_,index)=><span className="empty-day" key={`trailing-${index}`}/>)}
         </div>
       </div>}
       <div className="overtime-legend"><span><i className="holiday-dot"/>Tanggal merah / hari besar</span><span><i className="entry-dot"/>Lembur sudah diisi</span></div>
     </Panel>
-    {selected&&<div className="overtime-modal-backdrop" onMouseDown={event=>event.target===event.currentTarget&&close()}>
+    {selected&&createPortal(<div className="overtime-modal-backdrop" onMouseDown={event=>event.target===event.currentTarget&&close()}>
       <form className="overtime-modal" onSubmit={save}>
         <div className="overtime-modal-head"><div><p className="eyebrow">{existing?"Edit catatan":"Catatan baru"}</p><h3>{new Intl.DateTimeFormat("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"}).format(selectedDate)}</h3></div><button type="button" onClick={close}><X size={18}/></button></div>
-        <div className={`overtime-day-status ${selectedHoliday?"holiday":""}`}><CalendarDays size={17}/><span><b>{selectedHoliday?"Lembur Hari Besar":"Lembur Hari Kerja"}</b><small>{selectedHoliday||"Perhitungan normal"}</small></span></div>
-        <label className="modal-field"><span>Jumlah jam lembur</span><input type="number" min=".5" max="24" step=".5" value={hours} onChange={e=>setHours(e.target.value)} placeholder="Contoh: 2" required/></label>
-        <label className="modal-field"><span>Keterangan pekerjaan</span><textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Tuliskan pekerjaan yang dilakukan saat lembur…" required/></label>
-        {existing&&<div className="overtime-existing"><span>Upah tercatat</span><b>{money(existing.totalUpah)}</b></div>}
-        {formError&&<div className="remote-error"><AlertTriangle size={17}/><span>{formError}</span></div>}
+        <div className="overtime-modal-body">
+          <div className={`overtime-day-status ${selectedHoliday?"holiday":""}`}><CalendarDays size={17}/><span><b>{selectedHoliday?"Lembur Hari Besar":"Lembur Hari Kerja"}</b><small>{selectedHoliday||"Perhitungan normal"}</small></span></div>
+          <label className="modal-field"><span>Jumlah jam lembur</span><input type="number" min=".5" max="24" step=".5" value={hours} onChange={e=>setHours(e.target.value)} placeholder="Contoh: 2" required/></label>
+          <label className="modal-field"><span>Keterangan pekerjaan</span><textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Tuliskan pekerjaan yang dilakukan saat lembur…" required/></label>
+          {existing&&<div className="overtime-existing"><span>Upah tercatat</span><b>{money(existing.totalUpah)}</b></div>}
+          {formError&&<div className="remote-error"><AlertTriangle size={17}/><span>{formError}</span></div>}
+        </div>
         <div className="overtime-modal-actions">{existing&&<button type="button" className="danger-button" onClick={remove} disabled={saving}>Hapus</button>}<button type="submit" className="primary" disabled={saving}>{saving?<><span className="spinner"/>Menyimpan…</>:<><Check size={17}/>Simpan lembur</>}</button></div>
       </form>
-    </div>}
+    </div>,document.body)}
   </>;
 }
 
@@ -2288,6 +3490,7 @@ function OvertimeAdmin({ session }) {
   const now=new Date();
   const [year,setYear]=useState(now.getFullYear());
   const [month,setMonth]=useState(now.getMonth()+1);
+  const [query,setQuery]=useState("");
   const remote=useRemoteData(async ()=>{
     if (!session.token) throw new Error("Sesi aman tidak tersedia. Silakan logout dan login kembali.");
     const result=await apiPost(ENDPOINTS.users,{action:"getOvertimeAdmin",token:session.token,year,month},{timeout:90000});
@@ -2297,6 +3500,8 @@ function OvertimeAdmin({ session }) {
   const summary=remote.data?.summary||{};
   const cutoff=remote.data?.cutoff||{};
   const rows=asArray(remote.data);
+  const entries=Array.isArray(remote.data?.entries)?remote.data.entries:[];
+  const filteredEntries=entries.filter(item=>Object.values(item).join(" ").toLocaleLowerCase("id-ID").includes(query.toLocaleLowerCase("id-ID")));
   const money=value=>new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(value||0));
   const shortDate=value=>value?new Intl.DateTimeFormat("id-ID",{day:"numeric",month:"short",year:"numeric"}).format(new Date(`${value}T12:00:00`)):"-";
   const cutoffLabel=cutoff.tanggalAwal&&cutoff.tanggalAkhir?`${shortDate(cutoff.tanggalAwal)} – ${shortDate(cutoff.tanggalAkhir)}`:`22 ${SCHEDULE_MONTHS[month-1]} – 21 bulan berikutnya`;
@@ -2307,7 +3512,7 @@ function OvertimeAdmin({ session }) {
       <Stat icon={Clock3} label="Total jam lembur" value={remote.loading?"…":`${Number(summary.totalJam||0).toLocaleString("id-ID",{maximumFractionDigits:2})} jam`} detail={cutoffLabel} tone="mint"/>
       <Stat icon={FileBarChart} label="Total upah lembur" value={remote.loading?"…":money(summary.totalUpah)} detail={cutoffLabel} tone="amber"/>
     </div>
-    <Panel title="Total Upah Lemburan" action={<div className="overtime-filters">
+    <Panel title="Ringkasan Upah Lemburan" action={<div className="overtime-filters">
       <select value={month} onChange={e=>setMonth(Number(e.target.value))}>{SCHEDULE_MONTHS.map((name,index)=><option key={name} value={index+1}>{name}</option>)}</select>
       <select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(value=><option key={value}>{value}</option>)}</select>
     </div>}>
@@ -2318,6 +3523,23 @@ function OvertimeAdmin({ session }) {
         rows={rows.map(item=>[
           item.nama||"-",item.role||"-",`${item.jumlahData||0} kali`,
           `${Number(item.totalJam||0).toLocaleString("id-ID",{maximumFractionDigits:2})} jam`,
+          <b className="money-value">{money(item.totalUpah)}</b>
+        ])}
+      />}
+    </Panel>
+    <Panel title="Daftar Lemburan Seluruh Karyawan" action={<button className="secondary small" onClick={()=>exportCsv(
+      ["Tanggal","Nama karyawan","Role","Jenis lembur","Jam","Keterangan","Upah"],
+      filteredEntries.map(item=>[item.tanggal,item.nama,item.role,item.jenis,item.jam,item.keterangan,item.totalUpah]),
+      `rekap-lembur-${year}-${String(month).padStart(2,"0")}`
+    )} disabled={!filteredEntries.length}><Download size={16}/> Ekspor</button>}>
+      <Toolbar query={query} setQuery={setQuery}/>
+      <RemoteState loading={remote.loading} error={remote.error} empty={!filteredEntries.length} onRetry={remote.reload}/>
+      {!remote.loading&&!remote.error&&filteredEntries.length>0&&<SimpleTable
+        headers={["Tanggal","Nama karyawan","Role","Jenis lembur","Jam","Keterangan","Upah"]}
+        rows={filteredEntries.map(item=>[
+          shortDate(item.tanggal),item.nama||"-",item.role||"-",
+          item.jenis==="HariBesar"?"Hari besar":item.jenis==="Normal_Kecil"?"Hari kerja < 2 jam":"Hari kerja",
+          `${Number(item.jam||0).toLocaleString("id-ID",{maximumFractionDigits:2})} jam`,item.keterangan||"-",
           <b className="money-value">{money(item.totalUpah)}</b>
         ])}
       />}
@@ -2378,7 +3600,7 @@ function UserManagement({ session, notify }) {
       </Field>)}</div>
       {saveError&&<div className="remote-error"><AlertTriangle size={17}/><span>{saveError}</span></div>}
       <div className="form-footer"><p><ShieldCheck size={16}/> Hanya sesi Admin tervalidasi yang dapat menyimpan.</p><button className="primary" type="submit" disabled={saving}>{saving?<><span className="spinner"/>Menyimpan…</>:<><Check size={17}/> Simpan data teknisi</>}</button></div>
-    </form>:<Panel title="Editor teknisi"><div className="user-editor-empty"><Users size={34}/><b>Pilih teknisi atau tambah data baru</b><p>Admin dapat mengelola seluruh kolom isian. Kolom usia dan lama kerja mengikuti formula Spreadsheet.</p></div></Panel>}
+    </form>:<Panel title="Editor teknisi"><div className="user-editor-empty"><Users size={34}/><b>Pilih teknisi atau tambah data baru</b><p>Admin dapat mengelola seluruh kolom isian yang tersimpan di Neon.</p></div></Panel>}
   </div>;
 }
 
@@ -2394,32 +3616,142 @@ function SecurityLocked({ title }) {
   </Panel>;
 }
 
+function ElectricityDataPage({session,notify}) {
+  const [query,setQuery]=useState("");
+  const [selected,setSelected]=useState(null);
+  const remote=useRemoteData(async()=>{
+    const[energy,panel]=await Promise.all([
+      apiGet(ENDPOINTS.electricity,{action:"getData",bulan:"",tglAwal:"",tglAkhir:""}),
+      apiGet(ENDPOINTS.electricity,{action:"getPanelData"}),
+    ]);
+    return{energy:asArray(energy),panel:asArray(panel)};
+  });
+  const matches=item=>Object.values(item).join(" ").toLocaleLowerCase("id-ID").includes(query.toLocaleLowerCase("id-ID"));
+  const twoDecimals=value=>value===null||value===undefined||value===""||!Number.isFinite(Number(value))
+    ? "-"
+    : Number(value).toLocaleString("id-ID",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const energyHeaders=["Tanggal","Jam","Pemakaian kWh","Batas kVArh","Pemakaian kVArh","Faktor Daya","Kesimpulan"];
+  const energyItems=asArray(remote.data?.energy).filter(matches);
+  const energyRows=energyItems.map(x=>[x.tanggal,x.jam,twoDecimals(x.pemakaian_kwh),twoDecimals(x.batas_kvarh??x.nilai_kwh??x.kwh),twoDecimals(x.nilai_kvar??x.kvar),twoDecimals(x.faktor_daya),x.kesimpulan]);
+  const panelHeaders=["Tanggal","Jam","Panel","Cos φ","Petugas"];
+  const panelRows=asArray(remote.data?.panel).filter(matches).map(x=>[x.tanggal,x.jam,x.panel,twoDecimals(x.cos_phi),x.petugas||"-"]);
+  const save=async data=>{
+    const result=await apiPost(ENDPOINTS.electricity,{action:"update",id:selected.id,...data});
+    if(!isSuccess(result))throw new Error(result.message||"Data listrik gagal diperbarui.");
+    setSelected(null);
+    await remote.reload();
+    notify("Data listrik berhasil diperbarui dan dihitung ulang.");
+  };
+  return <>
+    <Toolbar query={query} setQuery={setQuery}/>
+    <RemoteState loading={remote.loading} error={remote.error} empty={!energyRows.length&&!panelRows.length} onRetry={remote.reload}/>
+    {!remote.loading&&!remote.error&&<>
+      <Panel title="Riwayat stand meter PLN" action={<button className="secondary small" onClick={()=>exportCsv(energyHeaders,energyRows,"listrik-pln")} disabled={!energyRows.length}><Download size={16}/> Ekspor</button>}>
+        {energyRows.length?<SimpleTable headers={energyHeaders} rows={energyRows} rowKeys={energyItems.map(item=>item.id)} onRowClick={index=>setSelected(energyItems[index])}/>:<div className="remote-state"><Database size={18}/> Belum ada data stand meter.</div>}
+      </Panel>
+      <Panel title="Riwayat cos φ panel" action={<button className="secondary small" onClick={()=>exportCsv(panelHeaders,panelRows,"cos-phi-panel")} disabled={!panelRows.length}><Download size={16}/> Ekspor</button>}>
+        {panelRows.length?<SimpleTable headers={panelHeaders} rows={panelRows}/>:<div className="remote-state"><Database size={18}/> Belum ada pembacaan cos φ panel.</div>}
+      </Panel>
+    </>}
+    {selected&&<ElectricityDetailModal item={selected} session={session} onClose={()=>setSelected(null)} onSave={save}/>}
+  </>;
+}
+
+function ElectricityDetailModal({item,session,onClose,onSave}){
+  const isAdmin=String(session?.role||"").toLocaleLowerCase("id-ID")==="admin";
+  const [editing,setEditing]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState("");
+  const [form,setForm]=useState(()=>({
+    tanggal:item.tanggal_input||"",jam:item.jam_input||String(item.jam||"").replace(".",":"),petugas:item.petugas||session?.name||"",
+    huhe_h:String(item.huhe_h??""),huhe_hh:String(item.huhe_hh??""),huar_heh:String(item.huar_heh??""),huar_hh:String(item.huar_hh??""),
+    grid_pln:item.grid_pln??"",pv_plts:item.pv_plts??"",to_grid:item.to_grid??"",
+  }));
+  const update=event=>setForm(current=>({...current,[event.target.name]:event.target.value}));
+  let assessment=null;
+  try{assessment=calculateElectricityAssessment(form);}catch{assessment=null;}
+  const numberLabel=value=>value===null||value===undefined||value===""||!Number.isFinite(Number(value))?"-":Number(value).toLocaleString("id-ID",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const detailItems=[
+    ["Tanggal pemeriksaan",item.tanggal||"-"],["Petugas",item.petugas||"-"],
+    ["HUHE H (saat ini)",numberLabel(item.huhe_h)],["HUHE HH (sebelumnya)",numberLabel(item.huhe_hh)],
+    ["HUAR HEH (saat ini)",numberLabel(item.huar_heh)],["HUAR HH (sebelumnya)",numberLabel(item.huar_hh)],
+    ["Grid PLN",numberLabel(item.grid_pln)],["PV PLTS",numberLabel(item.pv_plts)],["To Grid",numberLabel(item.to_grid)],
+    ["Pemakaian kWh",numberLabel(item.pemakaian_kwh)],["Batas kVArh",numberLabel(item.batas_kvarh)],
+    ["Pemakaian kVArh",numberLabel(item.nilai_kvar)],["Faktor daya",numberLabel(item.faktor_daya)],["Selisih",numberLabel(item.selisih)],
+  ];
+  const submit=async event=>{
+    event.preventDefault();setSaving(true);setError("");
+    try{await onSave(form);}catch(err){setError(err?.message||"Perubahan data listrik gagal disimpan.");}
+    finally{setSaving(false);}
+  };
+  const decimalInput=name=><input name={name} type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" value={form[name]} onChange={update}/>;
+  return <div className="modal-overlay" onMouseDown={event=>event.target===event.currentTarget&&!saving&&onClose()}>
+    <article className="modal-card electricity-detail-modal">
+      <div className="modal-head"><div><p className="eyebrow">Detail pemeriksaan listrik</p><h3>Stand meter PLN</h3><small>{item.tanggal} · {item.petugas||"Petugas tidak tercatat"}</small></div><button type="button" disabled={saving} onClick={onClose} aria-label="Tutup detail"><X size={18}/></button></div>
+      {!editing?<>
+        <div className="electricity-detail-status"><span><small>Kesimpulan</small><Badge text={item.kesimpulan||"-"}/></span><span><small>Selisih batas</small><b>{numberLabel(item.selisih)} kVArh</b></span></div>
+        <div className="report-detail-grid electricity-detail-grid">{detailItems.map(([label,value])=><div key={label}><small>{label}</small><b>{value}</b></div>)}</div>
+        <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Tutup</button>{isAdmin&&<button type="button" className="primary" onClick={()=>setEditing(true)}><Edit3 size={16}/> Edit data</button>}</div>
+      </>:<form onSubmit={submit}>
+        <div className="form-grid">
+          <Field label="Tanggal"><input name="tanggal" type="date" value={form.tanggal} onChange={update} required/></Field>
+          <Field label="Jam"><input name="jam" type="time" value={form.jam} onChange={update} required/></Field>
+          <Field label="HUHE H (saat ini)">{decimalInput("huhe_h")}</Field><Field label="HUHE HH (sebelumnya)">{decimalInput("huhe_hh")}</Field>
+          <Field label="HUAR HEH (saat ini)">{decimalInput("huar_heh")}</Field><Field label="HUAR HH (sebelumnya)">{decimalInput("huar_hh")}</Field>
+          <Field label="Grid PLN (MWh)">{decimalInput("grid_pln")}</Field><Field label="PV PLTS (MWh)">{decimalInput("pv_plts")}</Field>
+          <Field label="To Grid (MWh)">{decimalInput("to_grid")}</Field>
+          <Field label="Petugas"><select name="petugas" value={form.petugas} onChange={update} required>{[...new Set([session?.name,item.petugas,...ELECTRICITY_OFFICER_NAMES].filter(Boolean))].map(name=><option key={name}>{name}</option>)}</select></Field>
+        </div>
+        {assessment&&<div className={`electricity-assessment ${assessment.conclusion==="AMAN"?"safe":"warning"}`}><div><small>Pemakaian aktif</small><b>{numberLabel(assessment.activeKwh)} kWh</b></div><div><small>Batas reaktif</small><b>{numberLabel(assessment.reactiveLimitKvarh)} kVArh</b></div><div><small>Pemakaian reaktif</small><b>{numberLabel(assessment.reactiveKvarh)} kVArh</b></div><div><small>Faktor daya</small><b>{numberLabel(assessment.powerFactor)}</b></div><span><AlertTriangle size={17}/><strong>{assessment.conclusion}</strong></span></div>}
+        {error&&<div className="remote-error"><AlertTriangle size={16}/><span>{error}</span></div>}
+        <div className="modal-actions"><button type="button" className="secondary" disabled={saving} onClick={()=>setEditing(false)}>Batal</button><button className="primary" disabled={saving||!assessment}>{saving?<><span className="spinner"/>Menyimpan…</>:<><Check size={16}/> Simpan perubahan</>}</button></div>
+      </form>}
+    </article>
+  </div>;
+}
+
 function DataTablePage({ kind }) {
+  const [query,setQuery]=useState("");
+  const [period,setPeriod]=useState("Semua periode");
   const remote = useRemoteData(async () => {
-    if (kind === "listrik") return asArray(await apiGet(ENDPOINTS.electricity, { action:"getData", bulan:currentIndonesianMonth(), tglAwal:"", tglAkhir:"" }));
     if (kind === "bon") return asArray(await apiGet(ENDPOINTS.partRequests, { action:"getDaftarBon" })).filter(x => String(x.status).toLowerCase() === "open");
     return asArray(await apiGet(ENDPOINTS.transformerData, { action:"getDataTravo" }));
+  },[kind]);
+  const periodOf=value=>{
+    const match=String(value||"").match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+    if (!match) return "";
+    return new Intl.DateTimeFormat("id-ID",{month:"long",year:"numeric"})
+      .format(new Date(Number(match[3]),Number(match[2])-1,1));
+  };
+  const periods=useMemo(()=>[...new Set(remote.data.map(item=>periodOf(item.tanggal||item.tglPesan)).filter(Boolean))], [remote.data]);
+  const filtered=remote.data.filter(item=>{
+    const matchesQuery=Object.values(item).join(" ").toLocaleLowerCase("id-ID").includes(query.toLocaleLowerCase("id-ID"));
+    const matchesPeriod=period==="Semua periode"||periodOf(item.tanggal||item.tglPesan)===period;
+    return matchesQuery&&matchesPeriod;
   });
   const config = {
-    listrik: { headers:["Tanggal","Jam","HUHE H","HUHE HH","KWH","KVAR","Kesimpulan"], map:x=>[x.tanggal,x.jam,x.huhe_h,x.huhe_hh,x.nilai_kwh,x.nilai_kvar,x.kesimpulan] },
     bon: { headers:["Tanggal","Pemesan","Part","Jumlah","Kegunaan","Status"], map:x=>[x.tglPesan||x.tanggal,x.pemesan,x.nama,`${x.jmlPesan||x.jumlah} ${x.satuan||""}`,x.kegunaan,x.status] },
     travo: { headers:["Kode","Nama","Merk","Tipe","Tegangan","Pengadaan"], map:x=>[x.kode,x.nama,x.merk,x.tipe,x.tegangan,x.pengadaan] }
   }[kind];
-  const rows = remote.data.map(config.map);
-  return <Panel title="Data terbaru" action={<button className="secondary small" onClick={() => exportCsv(config.headers, rows, kind)}><Download size={16}/> Ekspor</button>}><Toolbar /><RemoteState loading={remote.loading} error={remote.error} empty={!rows.length} onRetry={remote.reload} />{rows.length > 0 && <SimpleTable headers={config.headers} rows={rows} />}</Panel>;
+  const rows = filtered.map(config.map);
+  return <Panel title="Data terbaru" action={<button className="secondary small" onClick={() => exportCsv(config.headers, rows, kind)} disabled={!rows.length}><Download size={16}/> Ekspor</button>}>
+    <Toolbar query={query} setQuery={setQuery}>{periods.length>0&&<select value={period} onChange={event=>setPeriod(event.target.value)}><option>Semua periode</option>{periods.map(value=><option key={value}>{value}</option>)}</select>}</Toolbar>
+    <RemoteState loading={remote.loading} error={remote.error} empty={!rows.length} onRetry={remote.reload} />
+    {!remote.loading&&!remote.error&&rows.length>0&&<SimpleTable headers={config.headers} rows={rows} />}
+  </Panel>;
 }
 
 function Toolbar({ query = "", setQuery = () => {}, children }) {
-  return <div className="toolbar"><label className="search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari data..." /></label>{children}<button className="filter"><SlidersHorizontal size={17} /> Filter</button></div>;
+  return <div className="toolbar"><label className="search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari data..." /></label>{children}</div>;
 }
 
-function SimpleTable({ headers, rows }) {
-  return <div className="table-wrap"><table><thead><tr>{headers.map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((row,i) => <tr key={i}>{row.map((cell,j) => <td key={j}>{j === row.length - 1 && typeof cell === "string" ? <Badge text={cell} /> : cell}</td>)}</tr>)}</tbody></table></div>;
+function SimpleTable({ headers, rows, onRowClick, rowKeys=[] }) {
+  return <div className="table-wrap"><table><thead><tr>{headers.map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((row,i) => <tr key={rowKeys[i]??i} className={onRowClick?"clickable-table-row":undefined} tabIndex={onRowClick?0:undefined} onClick={onRowClick?()=>onRowClick(i):undefined} onKeyDown={onRowClick?event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();onRowClick(i);}}:undefined}>{row.map((cell,j) => <td key={j}>{j === row.length - 1 && typeof cell === "string" ? <Badge text={cell} /> : cell}</td>)}</tr>)}</tbody></table></div>;
 }
 
 function Badge({ text }) {
   const value = String(text).toLowerCase();
-  const tone = value.includes("tinggi") || value.includes("perhatian") ? "danger" : value.includes("sedang") || value.includes("monitor") || value.includes("hari ini") ? "warning" : value.includes("open") || value.includes("proses") || value.includes("jadwal") ? "info" : "success";
+  const tone = value.includes("tinggi") || value.includes("kritis") || value.includes("perhatian") || value.includes("denda") ? "danger" : value.includes("sedang") || value.includes("monitor") || value.includes("hari ini") ? "warning" : value.includes("open") || value.includes("proses") || value.includes("jadwal") ? "info" : "success";
   return <span className={`badge ${tone}`}>{text}</span>;
 }
 

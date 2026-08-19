@@ -1,0 +1,376 @@
+/* ============================
+   MAINTENANCE KPI STYLES
+   Tambahan untuk fitur KPI dari RBKIC
+   ============================ */
+
+/* KPI Panel Container */
+.maintenance-kpi-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.kpi-section {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+}
+
+.kpi-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--label);
+  margin: 0 0 12px 0;
+  font-family: "Manrope", sans-serif;
+}
+
+/* KPI Compact View */
+.kpi-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+
+.kpi-mini {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.kpi-mini svg {
+  color: var(--mint);
+}
+
+/* Status Grid */
+.status-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  border-left: 3px solid;
+  min-width: 80px;
+}
+
+.badge-value {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: "Manrope", sans-serif;
+}
+
+.badge-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Priority Bar */
+.priority-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.priority-segment {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.priority-segment.rendah { background: var(--mint); }
+.priority-segment.biasa { background: var(--blue); }
+.priority-segment.tinggi { background: var(--amber); }
+.priority-segment.kritis { background: var(--danger); }
+
+.priority-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.priority-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+.priority-legend i.kritis { background: var(--danger); }
+.priority-legend i.tinggi { background: var(--amber); }
+.priority-legend i.biasa { background: var(--blue); }
+.priority-legend i.rendah { background: var(--mint); }
+
+/* Repeat Failure List */
+.repeat-failure-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.repeat-item {
+  display: grid;
+  grid-template-columns: 30px 1fr auto 100px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface-2);
+  border-radius: 6px;
+}
+
+.repeat-item .rank {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.repeat-item .machine {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repeat-item .count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.repeat-item .bar-bg {
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.repeat-item .bar-fill {
+  height: 100%;
+  background: var(--danger);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* PM Achievement */
+.pm-achievement {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pm-progress {
+  position: relative;
+  height: 24px;
+  background: var(--surface-2);
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.pm-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--mint) 0%, var(--mint-dark) 100%);
+  border-radius: 12px;
+  transition: width 0.3s ease;
+}
+
+.pm-target {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  background: var(--amber);
+  border-radius: 2px;
+}
+
+.pm-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pm-stats strong {
+  color: var(--ink);
+}
+
+/* Quality Breakdown */
+.quality-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quality-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.quality-segment {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.quality-segment.bagus { background: var(--mint); }
+.quality-segment.cukup { background: var(--amber); }
+.quality-segment.tidak-bagus { background: var(--danger); }
+
+.quality-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.quality-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+.quality-legend i.bagus { background: var(--mint); }
+.quality-legend i.cukup { background: var(--amber); }
+.quality-legend i.tidak-bagus { background: var(--danger); }
+
+/* KPI Stats Row */
+.kpi-stats-row {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: "Manrope", sans-serif;
+  color: var(--ink);
+}
+
+.stat-detail {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* KPI Badge */
+.kpi-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.kpi-badge svg {
+  color: var(--mint);
+}
+
+/* Dark Theme Adjustments */
+:root[data-theme="dark"] .kpi-section {
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] .status-badge,
+:root[data-theme="dark"] .repeat-item,
+:root[data-theme="dark"] .pm-progress,
+:root[data-theme="dark"] .quality-bar {
+  background: var(--surface-2);
+}
+
+:root[data-theme="dark"] .priority-bar,
+:root[data-theme="dark"] .kpi-compact {
+  background: #14241f;
+}
+
+:root[data-theme="dark"] .repeat-item .bar-bg,
+:root[data-theme="dark"] .pm-progress,
+:root[data-theme="dark"] .quality-bar {
+  background: #1a3030;
+}
+
+:root[data-theme="dark"] .stat-value {
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .kpi-badge {
+  background: #14241f;
+  border-color: #2a403a;
+}
+
+:root[data-theme="dark"] .kpi-mini {
+  color: var(--text-soft);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .status-grid {
+    flex-direction: column;
+  }
+
+  .status-badge {
+    flex-direction: row;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .repeat-item {
+    grid-template-columns: 24px 1fr auto;
+  }
+
+  .repeat-item .bar-bg {
+    display: none;
+  }
+
+  .priority-legend {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .pm-stats {
+    flex-direction: column;
+    gap: 4px;
+  }
+}

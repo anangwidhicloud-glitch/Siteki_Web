@@ -1,29 +1,45 @@
-const BASE = "https://script.google.com/macros/s/";
+const API_BASE = String(
+  import.meta.env?.VITE_API_URL ||
+  (import.meta.env?.DEV ? "https://siteki-neon-api.siteki.workers.dev" : "") ||
+  (typeof process !== "undefined" ? process.env?.VITE_API_URL : "") || ""
+)
+  .trim().replace(/\?+$/, "");
 const responseCache = new Map();
 const pendingRequests = new Map();
 
+function endpoint(resource) {
+  if (!API_BASE) return "";
+  const separator = API_BASE.includes("?") ? "&" : "?";
+  return `${API_BASE}${separator}resource=${encodeURIComponent(resource)}`;
+}
+
+function sessionToken() {
+  if (typeof sessionStorage === "undefined") return "";
+  try {
+    return JSON.parse(sessionStorage.getItem("siteki-session") || "null")?.token || "";
+  } catch {
+    return "";
+  }
+}
+
+function authHeaders(extra = {}) {
+  const token = sessionToken();
+  return { ...extra, ...(token ? { Authorization:`Bearer ${token}` } : {}) };
+}
+
 export const ENDPOINTS = {
-  login: `${BASE}AKfycbzzdAkBlB9PVR3aAtPmkuZ5OCO9Cz31S-zlGiQfPcPsUkhTfjsHQt6gasEO4qNvSFU/exec`,
-  users: `${BASE}AKfycbw2rSZ0GAJJv3PMtrXTeKktphfRYBHzQ4-2NJQ0vWU2_9k329UGC-2uancWWbgFnv4/exec`,
-  dashboardOrders: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
-  orders: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
-  createOrder: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
-  completeOrder: `${BASE}AKfycbzbmKFheI55ccsJ_kLdOzy6VIdGpgKIy2s9pljrIM8sNbgJ_RLywnzF-Q2sJTslVQU/exec`,
-  maintenance: `${BASE}AKfycbwQ7ocBNsl4x5-rGLrSyvkyluhSRl3B_LvmkA3cFuvuL9pBbVAOUI3i_Vu6jwfkfOA/exec`,
-  maintenanceMaster: `${BASE}AKfycbwSnaaYVxXWVngeGQYU2im2G5FQ6L7WstjTkx7IW3jVYcuELECt0_cyvM0cFx4Uf8U/exec`,
-  jobs: `${BASE}AKfycbyXwUhvZfhImtUBGpno8irGpYokkCnYmbx5HcOS88wogDpaUmAdOFKpv_wuoRKET6A/exec`,
-  electricity: `${BASE}AKfycbx4YbnLXFsnwDDV-Kso7Lx3Cu2R6tEYBkaEnRM_fnU-RBUoSWo-xZR9DIoHfzjwYd0/exec`,
-  stock: `${BASE}AKfycbxHnZzPQ3jCrMU3tvRGTiQnBIZe7pETN7iWr8e4amU4cdgi22TVzEFjB84ZXUohBDvD/exec`,
-  partMaster: `${BASE}AKfycbyLAKLUbUpzWwuR3KSet3pPyEQhV9d1pWuqduAToyYPeZpQm96AFJM7gPHaL5mTyeum/exec`,
-  partOrder: `${BASE}AKfycbwHVQ2pB4rKZXuZTLcffgIAHiRgo4lP_wPCieNNOd2XFdOxhHehcoo5DgxSBd2wUl8/exec`,
-  partRequests: `${BASE}AKfycbxJOKT1yM71bQr1PbJSJ7X6q-RdJ1nmUpjvutRzkBvIYuPbZM2cGh3NuQ0X62GCJkVd/exec`,
-  transformer: `${BASE}AKfycbyX0U2MaTrjBTZjLkTH64E3bIXg2lyHhtPdTJ1QbEFco34m3FK18gDDE0Lqk7ja-k-C/exec`,
-  transformerData: `${BASE}AKfycbyaJ1oCCTfcti5u98MYyWP9OBA96SGPEmL_dchslJ9myC4dEv4ku8bZebYAxyqt0aA/exec`,
-  stang: `${BASE}AKfycbw2mqd4JU5ILu85ql2HrEmT4ksv0vR95bo9MqGWwRyXqOWUEdBWk3yYG9CTYXoTF9g/exec`,
-  kpi: `${BASE}AKfycbyEO5MruO0r1StkK0iyEoQmfaa3iTZJDCAh4vg9-jdpqItGlt1yuPDe7orWDHwXRyU/exec`,
-  kpiCombined: `${BASE}AKfycbxWrt_-ItPd_61v0uLh1oLn1g0l3v5ov9ApsQFKoNuq8r7OGQIT8yXyRytgx7RSvbM/exec`,
-  downtime: `${BASE}AKfycbwXEeFSt5dCP-gPUtSbLX1WCfvPfSe7wJGnMs4vwEt1djVQNVjXxUdv8_ly9uFvM4o/exec`,
-  maintenanceDetail: `${BASE}AKfycbzxLaO2nEOxkUmBQnM0jAYzay7GGKBnOjhR3Afk9ZLUadK145ZdvOE-0NvIJ55EFKs/exec`
+  login: endpoint("users"), users: endpoint("users"),
+  monitoringVersion: endpoint("monitoring-version"),
+  dashboardOrders: endpoint("orders"), orders: endpoint("orders"),
+  createOrder: endpoint("orders"), completeOrder: endpoint("orders"),
+  maintenance: endpoint("maintenance"), maintenanceMaster: endpoint("maintenance-master"),
+  jobs: endpoint("jobs"), electricity: endpoint("electricity"),
+  stock: endpoint("stock"), partMaster: endpoint("parts"),
+  partOrder: endpoint("part-order"), partRequests: endpoint("part-requests"),
+  transformer: endpoint("transformers"), transformerData: endpoint("transformer-data"),
+  stang: endpoint("stang"), kpi: endpoint("kpi"),
+  kpiCombined: endpoint("kpi-combined"), kpiDaily:endpoint("kpi-daily"), downtime: endpoint("downtime"),
+  maintenanceDetail: endpoint("maintenance-detail"), backup: endpoint("backup")
 };
 
 function withQuery(url, params = {}) {
@@ -59,7 +75,15 @@ export function clearApiCache(endpoint) {
 
 async function parseResponse(response) {
   const text = await response.text();
-  if (!response.ok) throw new Error(`Permintaan server gagal (HTTP ${response.status}).`);
+  if (!response.ok) {
+    try {
+      const payload=JSON.parse(text);
+      throw new Error(payload?.message||`Permintaan server gagal (HTTP ${response.status}).`);
+    } catch(error) {
+      if(error instanceof SyntaxError)throw new Error(`Permintaan server gagal (HTTP ${response.status}).`);
+      throw error;
+    }
+  }
   if (!text.trim()) return { status: "success" };
   try {
     return JSON.parse(text);
@@ -69,6 +93,7 @@ async function parseResponse(response) {
 }
 
 export async function apiGet(endpoint, params = {}, options = {}) {
+  if (!endpoint) throw new Error("VITE_API_URL belum dikonfigurasi.");
   const cacheable = options.cache !== false && isReadAction(params);
   const key = requestKey(endpoint, params);
   const ttl = options.cacheTtl ?? 30000;
@@ -82,6 +107,7 @@ export async function apiGet(endpoint, params = {}, options = {}) {
     try {
       const response = await fetch(withQuery(endpoint, params), {
         method: "GET",
+        headers: authHeaders(),
         cache: "no-store",
         signal: controller.signal,
         redirect: "follow"
@@ -100,12 +126,13 @@ export async function apiGet(endpoint, params = {}, options = {}) {
 }
 
 export async function apiPost(endpoint, payload, options = {}) {
+  if (!endpoint) throw new Error("VITE_API_URL belum dikonfigurasi.");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeout || 30000);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      headers: authHeaders({ "Content-Type": "application/json;charset=utf-8" }),
       body: JSON.stringify(payload),
       signal: controller.signal,
       redirect: "follow"
@@ -117,6 +144,23 @@ export async function apiPost(endpoint, payload, options = {}) {
     clearTimeout(timeout);
   }
 }
+
+export const RBKIC_ENDPOINTS = {
+  // RBKIC Local (development)
+  rbkicLocal: 'http://localhost:4173/api/kpi',
+  // RBKIC Production - sesuaikan dengan URL deployment
+  rbkicProduction: 'http://localhost:4173/api/kpi'
+};
+
+// RBKIC KPI API Endpoints
+export const RBKIC_KPI = {
+  summary: '/summary',
+  wo: '/wo',
+  pm: '/pm',
+  downtime: '/downtime',
+  quality: '/quality',
+  combined: '/combined'
+};
 
 export function asArray(value, keys = ["data", "rows", "result"]) {
   if (Array.isArray(value)) return value;
