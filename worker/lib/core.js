@@ -21,7 +21,11 @@ export function allowedOrigin(request, env) {
   if (!origin) return configured[0] || "*";
   if (!configured.length || configured.includes("*")) return origin;
   if (configured.includes(origin)) return origin;
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin) || /^capacitor:\/\/localhost$/i.test(origin)) {
+  if (
+    /^https?:\/\/localhost(:\d+)?$/i.test(origin) ||
+    /^capacitor:\/\/localhost$/i.test(origin) ||
+    /^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)
+  ) {
     return origin;
   }
   throw new HttpError(403, "Origin tidak diizinkan.");
