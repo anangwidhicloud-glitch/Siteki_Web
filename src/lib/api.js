@@ -6,6 +6,8 @@ const API_BASE = String(
   .trim().replace(/\?+$/, "");
 const responseCache = new Map();
 const pendingRequests = new Map();
+const RETRYABLE_READ_STATUSES = new Set([502, 503, 504]);
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function endpoint(resource) {
   if (!API_BASE) return "";
@@ -14,9 +16,12 @@ function endpoint(resource) {
 }
 
 function sessionToken() {
-  if (typeof sessionStorage === "undefined") return "";
+  if (typeof window === "undefined") return "";
   try {
-    return JSON.parse(sessionStorage.getItem("siteki-session") || "null")?.token || "";
+    const raw =
+      (typeof localStorage !== "undefined" && localStorage.getItem("siteki-session")) ||
+      (typeof sessionStorage !== "undefined" && sessionStorage.getItem("siteki-session"));
+    return JSON.parse(raw || "null")?.token || "";
   } catch {
     return "";
   }
@@ -27,9 +32,23 @@ function authHeaders(extra = {}) {
   return { ...extra, ...(token ? { Authorization:`Bearer ${token}` } : {}) };
 }
 
+export function formatApiError(error) {
+  if (!error) return new Error("Terjadi kesalahan jaringan.");
+  const msg = String(error.message || "");
+  const name = String(error.name || "");
+  if (name === "AbortError" || /aborted/i.test(msg) || /signal is aborted/i.test(msg)) {
+    return new Error("Waktu tunggu koneksi habis (timeout) atau koneksi terputus. Pastikan internet stabil dan coba lagi.");
+  }
+  if (/failed to fetch|network\s?error|load failed/i.test(msg)) {
+    return new Error("Tidak dapat terhubung ke server. Periksa koneksi internet Anda.");
+  }
+  return error;
+}
+
 export const ENDPOINTS = {
   login: endpoint("users"), users: endpoint("users"),
   monitoringVersion: endpoint("monitoring-version"),
+  notifications: endpoint("notifications"),
   dashboardOrders: endpoint("orders"), orders: endpoint("orders"),
   createOrder: endpoint("orders"), completeOrder: endpoint("orders"),
   maintenance: endpoint("maintenance"), maintenanceMaster: endpoint("maintenance-master"),
@@ -76,6 +95,13 @@ export function clearApiCache(endpoint) {
 async function parseResponse(response) {
   const text = await response.text();
   if (!response.ok) {
+    if (response.status === 401) {
+      try {
+        if (typeof localStorage !== "undefined") localStorage.removeItem("siteki-session");
+        if (typeof sessionStorage !== "undefined") sessionStorage.removeItem("siteki-session");
+        if (typeof window !== "undefined") window.dispatchEvent(new Event("siteki-session-expired"));
+      } catch {}
+    }
     try {
       const payload=JSON.parse(text);
       throw new Error(payload?.message||`Permintaan server gagal (HTTP ${response.status}).`);
@@ -102,17 +128,34 @@ export async function apiGet(endpoint, params = {}, options = {}) {
   if (cacheable && pendingRequests.has(key)) return pendingRequests.get(key);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeout || 30000);
+  const timeout = setTimeout(() => controller.abort(), options.timeout || 45000);
   const request = (async () => {
     try {
-      const response = await fetch(withQuery(endpoint, params), {
-        method: "GET",
-        headers: authHeaders(),
-        cache: "no-store",
-        signal: controller.signal,
-        redirect: "follow"
-      });
-      const value = await parseResponse(response);
+      let value;
+      let lastError;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const response = await fetch(withQuery(endpoint, params), {
+            method: "GET",
+            headers: authHeaders(),
+            cache: "no-store",
+            signal: controller.signal,
+            redirect: "follow"
+          });
+          if (RETRYABLE_READ_STATUSES.has(response.status) && attempt < 2) {
+            await wait(350 * (attempt + 1));
+            continue;
+          }
+          value = await parseResponse(response);
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = formatApiError(error);
+          if (controller.signal.aborted || attempt === 2) break;
+          await wait(350 * (attempt + 1));
+        }
+      }
+      if (lastError) throw lastError;
       if (cacheable && ttl > 0) responseCache.set(key,{value,expiresAt:Date.now()+ttl});
       else if (!cacheable) clearApiCache(endpoint);
       return value;
@@ -127,22 +170,35 @@ export async function apiGet(endpoint, params = {}, options = {}) {
 
 export async function apiPost(endpoint, payload, options = {}) {
   if (!endpoint) throw new Error("VITE_API_URL belum dikonfigurasi.");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json;charset=utf-8" }),
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-      redirect: "follow"
-    });
-    const value = await parseResponse(response);
-    clearApiCache(endpoint);
-    return value;
-  } finally {
-    clearTimeout(timeout);
+  const maxAttempts = options.retries ? options.retries + 1 : 1;
+  const timeoutMs = options.timeout || 45000;
+  let lastError;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json;charset=utf-8" }),
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+        redirect: "follow"
+      });
+      const value = await parseResponse(response);
+      clearApiCache(endpoint);
+      return value;
+    } catch (error) {
+      lastError = formatApiError(error);
+      if (options.signal?.aborted) break;
+      if (attempt < maxAttempts - 1) {
+        await wait(600 * (attempt + 1));
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw lastError;
 }
 
 export const RBKIC_ENDPOINTS = {

@@ -63,3 +63,14 @@ test("backup laporan kerja format master dapat langsung dibaca untuk upload",asy
   assert.equal(row.started_at,"2026-08-18T08:00:00+07:00");
   assert.equal(row.spare_part_name,"Bearing");
 });
+
+test("workbook loader memuat modul data dan direct workbook secara dinamis",async()=>{
+  const { loadDataWorkbook, loadDirectWorkbook, preloadWorkbookModules } = await import("../src/lib/workbookLoader.js");
+  preloadWorkbookModules();
+  const dataMod = await loadDataWorkbook();
+  const directMod = await loadDirectWorkbook();
+  assert.equal(typeof dataMod.createBackupWorkbook, "function");
+  assert.equal(typeof dataMod.parseBackupWorkbook, "function");
+  assert.equal(typeof directMod.parseDirectWorkbook, "function");
+});
+

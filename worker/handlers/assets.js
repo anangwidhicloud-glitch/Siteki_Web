@@ -3,6 +3,7 @@ import {
   number, required, requireSession, rowKey, text,
 } from "../lib/core.js";
 import { calculateElectricityAssessment, summarizeMonthlyReactiveEnergy } from "../../src/lib/electricity.js";
+import { queueSystemNotification,sendSystemNotification } from "../lib/push.js";
 
 function maintenanceObject(row) {
   const legacy = row.legacy_data && typeof row.legacy_data === "object" ? row.legacy_data : {};
@@ -53,8 +54,167 @@ async function getMaintenancePrintData(request,env) {
   }))};
 }
 
+async function getInspectionChecks(request, env, inspectionId) {
+  if (!inspectionId) throw new HttpError(400, "ID perawatan diperlukan.");
+  const sql = database(env);
+  const rows = await sql`
+    SELECT 
+      item.name,
+      item.sort_order,
+      result.status,
+      coalesce(result.raw_status,
+        CASE result.status
+          WHEN 'good' THEN 'Bagus'
+          WHEN 'repair_needed' THEN 'Perbaikan'
+          WHEN 'not_applicable' THEN 'T.A'
+          ELSE result.status
+        END) AS raw_status
+    FROM maintenance_check_results result
+    JOIN maintenance_check_items item ON item.id = result.item_id
+    WHERE result.inspection_id = ${inspectionId}
+    ORDER BY item.sort_order, item.name
+  `;
+  return {
+    status: "success",
+    data: rows.map(r => ({
+      name: r.name,
+      sort_order: r.sort_order,
+      status: r.status,
+      raw_status: r.raw_status
+    }))
+  };
+}
+
+async function syncInspectionCheckResults(sql, inspectionId, category, checks, defaultCondition) {
+  const rawChecks = Array.isArray(checks) ? checks : [];
+  if (rawChecks.length > 0) {
+    const existingItems = await sql`
+      SELECT id, lower(btrim(name)) AS name_lower, sort_order
+      FROM maintenance_check_items
+      WHERE lower(btrim(machine_category)) = lower(btrim(${category}))
+    `;
+    const existingMap = new Map();
+    existingItems.forEach(item => existingMap.set(item.name_lower, item.id));
+
+    for (let index = 0; index < rawChecks.length; index += 1) {
+      const check = rawChecks[index];
+      const itemName = text(check.name);
+      if (!itemName) continue;
+      const key = itemName.toLowerCase().trim();
+      if (!existingMap.has(key)) {
+        const sortOrder = Number(check.sort_order ?? check.sortOrder ?? index + 1);
+        const newItem = await sql`
+          INSERT INTO maintenance_check_items (machine_category, name, sort_order)
+          VALUES (${category}, ${itemName}, ${sortOrder})
+          ON CONFLICT (machine_category, name, sort_order) DO UPDATE SET is_active=true
+          RETURNING id, lower(btrim(name)) AS name_lower
+        `;
+        if (newItem[0]?.id) {
+          existingMap.set(newItem[0].name_lower, newItem[0].id);
+        }
+      }
+    }
+
+    const resultsToInsert = [];
+    for (let index = 0; index < rawChecks.length; index += 1) {
+      const check = rawChecks[index];
+      const itemName = text(check.name);
+      if (!itemName) continue;
+      const key = itemName.toLowerCase().trim();
+      const itemId = existingMap.get(key);
+      if (!itemId) continue;
+
+      const rawStatus = text(check.raw_status || check.rawStatus || check.status) || "Bagus";
+      const status = /repair|perbaikan|rusak/i.test(rawStatus)
+        ? "repair_needed"
+        : /not_applicable|t\.a|tidak ada|tidak berlaku|^x$/i.test(rawStatus)
+        ? "not_applicable"
+        : /baik|bagus|normal/i.test(rawStatus)
+        ? "good"
+        : "other";
+
+      resultsToInsert.push({
+        inspection_id: inspectionId,
+        item_id: itemId,
+        status,
+        raw_status: rawStatus
+      });
+    }
+
+    if (resultsToInsert.length > 0) {
+      await sql`
+        INSERT INTO maintenance_check_results (inspection_id, item_id, status, raw_status)
+        SELECT
+          r.inspection_id::uuid,
+          r.item_id::uuid,
+          r.status,
+          r.raw_status
+        FROM jsonb_to_recordset(${JSON.stringify(resultsToInsert)}::jsonb) AS r(
+          inspection_id uuid,
+          item_id uuid,
+          status text,
+          raw_status text
+        )
+        ON CONFLICT (inspection_id, item_id) DO UPDATE
+        SET status = excluded.status,
+            raw_status = excluded.raw_status
+      `;
+    }
+  } else if (defaultCondition) {
+    const items = await sql`
+      INSERT INTO maintenance_check_items (machine_category, name, sort_order)
+      VALUES (${category}, 'Kondisi mesin (input web)', 9999)
+      ON CONFLICT (machine_category, name, sort_order) DO UPDATE SET is_active=true
+      RETURNING id
+    `;
+    const status = /baik|bagus|normal/i.test(defaultCondition) ? "good" : "repair_needed";
+    await sql`
+      INSERT INTO maintenance_check_results (inspection_id, item_id, status, raw_status)
+      VALUES (${inspectionId}, ${items[0].id}, ${status}, ${defaultCondition})
+      ON CONFLICT (inspection_id, item_id) DO UPDATE SET status=excluded.status, raw_status=excluded.raw_status
+    `;
+  }
+}
+
 async function saveMaintenance(request,env,body) {
   await requireSession(request,env,body);
+  const inspectedOn=isoDate(body.tanggal);
+  if(!inspectedOn) throw new HttpError(400,"Tanggal perawatan tidak valid.");
+  const category=text(body.kategori)||"Mesin", type=text(body.jenis), name=required(body.nama_mesin,"Nama mesin");
+  const code=text(body.waktu)||"M", maintenanceType=code.toUpperCase()==="B"?"Bulanan":"Mingguan";
+  const notes=[text(body.hasil_pemeriksaan),text(body.keterangan)].filter(Boolean).join(" — ")||null;
+  const sql=database(env);
+
+  // Pengaman kuota perawatan bulanan: 3x Mingguan dan 1x Bulanan
+  const monthCounts = await sql`
+    SELECT 
+      count(*) FILTER (WHERE upper(coalesce(schedule_code,'')) = 'B' OR lower(coalesce(maintenance_type,'')) LIKE '%bulanan%')::int AS count_b,
+      count(*) FILTER (WHERE upper(coalesce(schedule_code,'')) != 'B' AND lower(coalesce(maintenance_type,'')) NOT LIKE '%bulanan%')::int AS count_m
+    FROM maintenance_inspections
+    WHERE lower(btrim(machine_name)) = lower(btrim(${name}))
+      AND date_trunc('month', inspected_on::date) = date_trunc('month', ${inspectedOn}::date)
+  `;
+  const countB = Number(monthCounts[0]?.count_b || 0);
+  const countM = Number(monthCounts[0]?.count_m || 0);
+  if (countM >= 3 && countB >= 1) {
+    throw new HttpError(400, `Mesin ${name} sudah mencapai batas maksimal perawatan untuk bulan ini (3x Mingguan dan 1x Bulanan). Perawatan tidak dapat ditambah lagi.`);
+  }
+
+  const machine=await sql`SELECT id FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
+  const plan=await sql`SELECT id FROM maintenance_plans WHERE planned_on=${inspectedOn}::date AND lower(machine_name)=lower(${name}) ORDER BY (lower(coalesce(schedule_code,''))=lower(${code})) DESC LIMIT 1`;
+  const rows=await sql`
+    INSERT INTO maintenance_inspections (plan_id,machine_id,inspected_on,machine_category,machine_type,machine_name,schedule_code,maintenance_type,notes,source_sheet,legacy_sheet_row,legacy_data)
+    VALUES (${plan[0]?.id||null},${machine[0]?.id||null},${inspectedOn},${category},${type},${name},${code},${maintenanceType},${notes},'Neon API',NULL,${JSON.stringify(body)}::jsonb)
+    RETURNING id
+  `;
+  const condition=text(body.kondisi_mesin||body.kondisi);
+  await syncInspectionCheckResults(sql, rows[0].id, category, body.checks, condition);
+  return {status:"success",message:"Data perawatan berhasil disimpan.",data:{id:rows[0].id}};
+}
+
+async function updateMaintenance(request,env,body) {
+  await requireSession(request,env,body,["Admin"]);
+  const id=required(body.id,"ID perawatan");
   const inspectedOn=isoDate(body.tanggal);
   if(!inspectedOn) throw new HttpError(400,"Tanggal perawatan tidak valid.");
   const category=text(body.kategori)||"Mesin", type=text(body.jenis), name=required(body.nama_mesin,"Nama mesin");
@@ -64,22 +224,38 @@ async function saveMaintenance(request,env,body) {
   const machine=await sql`SELECT id FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
   const plan=await sql`SELECT id FROM maintenance_plans WHERE planned_on=${inspectedOn}::date AND lower(machine_name)=lower(${name}) ORDER BY (lower(coalesce(schedule_code,''))=lower(${code})) DESC LIMIT 1`;
   const rows=await sql`
-    INSERT INTO maintenance_inspections (plan_id,machine_id,inspected_on,machine_category,machine_type,machine_name,schedule_code,maintenance_type,notes,source_sheet,legacy_sheet_row,legacy_data)
-    VALUES (${plan[0]?.id||null},${machine[0]?.id||null},${inspectedOn},${category},${type},${name},${code},${maintenanceType},${notes},'Neon API',NULL,${JSON.stringify(body)}::jsonb)
+    UPDATE maintenance_inspections
+    SET plan_id=${plan[0]?.id||null},
+        machine_id=${machine[0]?.id||null},
+        inspected_on=${inspectedOn},
+        machine_category=${category},
+        machine_type=${type},
+        machine_name=${name},
+        schedule_code=${code},
+        maintenance_type=${maintenanceType},
+        notes=${notes},
+        legacy_data=coalesce(legacy_data,'{}'::jsonb) || ${JSON.stringify(body)}::jsonb,
+        updated_at=now()
+    WHERE id=${id}
     RETURNING id
   `;
+  if(!rows.length) throw new HttpError(404,"Data perawatan tidak ditemukan.");
   const condition=text(body.kondisi_mesin||body.kondisi);
-  if(condition) {
-    const items=await sql`
-      INSERT INTO maintenance_check_items (machine_category,name,sort_order)
-      VALUES (${category},'Kondisi mesin (input web)',9999)
-      ON CONFLICT (machine_category,name,sort_order) DO UPDATE SET is_active=true
-      RETURNING id
-    `;
-    const status=/baik|bagus|normal/i.test(condition)?"good":"repair_needed";
-    await sql`INSERT INTO maintenance_check_results (inspection_id,item_id,status,raw_status) VALUES (${rows[0].id},${items[0].id},${status},${condition}) ON CONFLICT (inspection_id,item_id) DO UPDATE SET status=excluded.status,raw_status=excluded.raw_status`;
+  if (Array.isArray(body.checks) && body.checks.length > 0) {
+    await sql`DELETE FROM maintenance_check_results WHERE inspection_id=${id}`;
   }
-  return {status:"success",message:"Data perawatan berhasil disimpan.",data:{id:rows[0].id}};
+  await syncInspectionCheckResults(sql, id, category, body.checks, condition);
+  return {status:"success",message:"Data perawatan berhasil diperbarui.",data:{id}};
+}
+
+async function deleteMaintenance(request,env,body) {
+  await requireSession(request,env,body,["Admin"]);
+  const id=required(body.id,"ID perawatan");
+  const sql=database(env);
+  await sql`DELETE FROM maintenance_check_results WHERE inspection_id=${id}`;
+  const rows=await sql`DELETE FROM maintenance_inspections WHERE id=${id} RETURNING id`;
+  if(!rows.length) throw new HttpError(404,"Data perawatan tidak ditemukan.");
+  return {status:"success",message:"Data perawatan berhasil dihapus."};
 }
 
 function electricityObject(row,panelReadings=[]){
@@ -164,7 +340,7 @@ async function getMonthlyReactiveEnergy(env,yearValue){
     data:summarizeMonthlyReactiveEnergy(rows,{year,now:new Date()})};
 }
 
-async function saveElectricity(request,env,body){
+async function saveElectricity(request,env,body,executionCtx){
   const profile=await requireSession(request,env,body);const day=isoDate(body.tanggal),time=text(body.jam)||"00:00";
   if(!day)throw new HttpError(400,"Tanggal listrik tidak valid.");
   const checkedAt=`${day}T${time}:00+07:00`,officer=profile.role==="Admin"?required(body.petugas||profile.full_name,"Petugas"):required(profile.full_name,"Nama akun"),sql=database(env);
@@ -177,6 +353,10 @@ async function saveElectricity(request,env,body){
   catch(error){throw new HttpError(400,error.message);}
   const kwh=assessment.reactiveLimitKvarh,kvar=assessment.reactiveKvarh,difference=assessment.marginKvarh,conclusion=assessment.conclusion;
   const rows=await sql`INSERT INTO electricity_checks(officer_id,checked_at,officer_name,huhe_h,huhe_hh,huar_heh,huar_hh,grid_from_mwh,pv_from_mwh,grid_to_mwh,kwh,kvar,difference,conclusion,source_sheet,legacy_sheet_row,legacy_data) VALUES(${officers[0].id},${checkedAt},${officer},${h},${hh},${heh},${ahh},${number(body.grid_pln)},${number(body.pv_plts)},${number(body.to_grid)},${kwh},${kvar},${difference},${conclusion},'Neon API',NULL,${JSON.stringify(body)}::jsonb) RETURNING id`;
+  queueSystemNotification(executionCtx,sendSystemNotification(env,{
+    type:"kvar_check",title:"Pengecekan kVAr baru",body:`${officer} mencatat ${Number(kvar||0).toLocaleString("id-ID",{maximumFractionDigits:2})} kVArh — ${conclusion}.`,
+    url:"./?open=electricityData",entityId:rows[0].id,
+  }));
   return{status:"success",message:"Data listrik berhasil disimpan.",data:{id:rows[0].id}};
 }
 
@@ -275,11 +455,18 @@ async function saveOil(request,env,body){
   if(!rows.length)throw new HttpError(404,"Titik oli tidak ditemukan.");return{status:"success",message:"Pemeriksaan oli berhasil disimpan ke Neon.",data:{id:rows[0].id}};
 }
 
-export async function handleAssets({request,env,url,resource,body}){
+export async function handleAssets({request,env,url,resource,body,executionCtx}){
   const params=Object.fromEntries(url.searchParams),action=text(request.method==="POST"?body.action:params.action)||"";
-  if(resource==="maintenance")return request.method==="GET"
-    ? action==="getPrintData"?getMaintenancePrintData(request,env):getMaintenance(env)
-    : saveMaintenance(request,env,body);
+  if(resource==="maintenance") {
+    if(request.method==="GET") {
+      if(action==="getPrintData") return getMaintenancePrintData(request,env);
+      if(action==="getInspectionChecks"||action==="getChecks") return getInspectionChecks(request,env,params.id);
+      return getMaintenance(env);
+    }
+    if(action==="delete"||action==="hapus") return deleteMaintenance(request,env,body);
+    if(action==="update"||action==="edit"||(body.id&&action!=="insert")) return updateMaintenance(request,env,body);
+    return saveMaintenance(request,env,body);
+  }
   if(resource==="electricity"){
     if(request.method==="GET"){
       if(action==="getPanelData")return getPanelPowerFactorData(env);
@@ -288,7 +475,7 @@ export async function handleAssets({request,env,url,resource,body}){
     }
     if(action==="update")return updateElectricity(request,env,body);
     if(action==="insertPanelCosPhi")return savePanelPowerFactor(request,env,body);
-    return saveElectricity(request,env,body);
+    return saveElectricity(request,env,body,executionCtx);
   }
   if(resource==="transformers"){
     if(request.method==="POST")return saveTransformer(request,env,body);

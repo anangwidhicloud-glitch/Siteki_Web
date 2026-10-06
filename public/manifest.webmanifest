@@ -1,0 +1,14 @@
+{
+  "id": "./",
+  "name": "SiTeki — Sistem Informasi Teknik",
+  "short_name": "SiTeki",
+  "description": "Sistem informasi operasional dan engineering PT. Pabrik Besi Beton Raja Besi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#071713",
+  "theme_color": "#071713",
+  "icons": [
+    {"src":"siteki-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}

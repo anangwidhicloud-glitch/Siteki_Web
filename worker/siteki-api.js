@@ -5,6 +5,7 @@ import { handleData } from "./handlers/data.js";
 import { handleAssets } from "./handlers/assets.js";
 import { handleAnalytics } from "./handlers/analytics.js";
 import { handleBackup } from "./handlers/backup.js";
+import { handleNotifications } from "./handlers/notifications.js";
 
 async function router(context) {
   const { resource, request, env, body } = context;
@@ -25,7 +26,7 @@ async function router(context) {
     if (overtime) return overtime;
   }
   if (resource === "backup") return handleBackup(context);
-  const handlers = [handleData, handleAssets, handleAnalytics];
+  const handlers = [handleNotifications,handleData, handleAssets, handleAnalytics];
   for (const handler of handlers) {
     const result = await handler(context);
     if (result !== null && result !== undefined) return result;
@@ -34,7 +35,7 @@ async function router(context) {
 }
 
 export default {
-  fetch(request, env) {
-    return handleRequest(request, env, router);
+  fetch(request, env, executionCtx) {
+    return handleRequest(request, env, context=>router({...context,executionCtx}));
   },
 };

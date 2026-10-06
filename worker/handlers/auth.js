@@ -60,7 +60,7 @@ async function login(request, env, body) {
   await sql`
     INSERT INTO api_sessions (user_id, token_hash, expires_at, user_agent, ip_address)
     VALUES (
-      ${user.id}, ${tokenHash}, now() + interval '8 hours',
+      ${user.id}, ${tokenHash}, now() + interval '30 days',
       ${text(request.headers.get("User-Agent"), 1000)},
       ${text(request.headers.get("CF-Connecting-IP"), 100)}
     )

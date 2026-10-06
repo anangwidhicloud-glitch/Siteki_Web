@@ -19,7 +19,11 @@ export function allowedOrigin(request, env) {
     .map(value => value.trim())
     .filter(Boolean);
   if (!origin) return configured[0] || "*";
-  if (!configured.length || configured.includes(origin)) return origin;
+  if (!configured.length || configured.includes("*")) return origin;
+  if (configured.includes(origin)) return origin;
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin) || /^capacitor:\/\/localhost$/i.test(origin)) {
+    return origin;
+  }
   throw new HttpError(403, "Origin tidak diizinkan.");
 }
 
@@ -197,7 +201,8 @@ export async function handleRequest(request, env, router) {
     try {
       return json(request, env, status, {
         status: "error",
-        message: status === 500 ? "Server SiTeki mengalami kendala." : error.message,
+        message: error.message || "Server SiTeki mengalami kendala.",
+        details: error.stack || String(error)
       });
     } catch {
       return new Response(JSON.stringify({ status: "error", message: error.message }), {

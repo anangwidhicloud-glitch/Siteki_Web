@@ -18,11 +18,11 @@ test("baris baru menghapus ID dan nilai kosong agar default database berlaku",()
   assert.deepEqual(result.source,{machine_name:"Mesin A"});
 });
 
-test("baris lama dengan ID ditandai untuk dilewati",()=>{
+test("baris dengan ID ditandai untuk di-upsert dan diperbarui pada konflik",()=>{
   const id="0f6c5163-22a3-4cc8-a49b-dc60996d83aa";
   const result=buildUpsertStatement(dataset,columns,{id,machine_name:"Mesin A",notes:""});
-  assert.equal(result.mode,"skip");
-  assert.equal(result.statement,"");
+  assert.equal(result.mode,"insert");
+  assert.match(result.statement,/ON CONFLICT \("id"\) DO UPDATE SET/);
 });
 
 test("query upsert hanya memakai tabel dan kolom yang sudah diizinkan",()=>{

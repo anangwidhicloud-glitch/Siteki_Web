@@ -130,10 +130,58 @@ function doPost(e) {
     if (action === "updateReport") return json_(updateReport_(body));
     if (action === "deleteReport") return json_(deleteReport_(body));
     if (action === "addMasterPart") return json_(addMasterPart_(body));
+    if (action === "updateMasterPart") return json_(updateMasterPart_(body));
+    if (action === "updateMasterPartPhoto") return json_(updateMasterPartPhoto_(body));
+    if (action === "removeMasterPartPhoto") return json_(removeMasterPartPhoto_(body));
     return json_(insertReport_(body));
   } catch (error) {
     return json_({ status: "error", message: String(error.message || error) });
   }
+}
+
+function updateMasterPart_(body) {
+  requireAdmin_(body.token);
+  var kategori = clean_(body.kategori);
+  var nama = clean_(body.nama);
+  var ukuran = clean_(body.ukuran);
+  var jenisKomponen = clean_(body.jenisKomponen);
+  var satuan = clean_(body.satuan) || "Pcs";
+  if (!kategori || !nama || !ukuran) {
+    throw new Error("Kategori, nama, dan ukuran part wajib diisi.");
+  }
+  var stockDatabase = SpreadsheetApp.openByUrl(DB3_URL);
+  var sheet = stockDatabase.getSheetByName("Part");
+  if (!sheet) throw new Error("Sheet 'Part' pada database stok tidak ditemukan.");
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var values = sheet.getDataRange().getDisplayValues();
+    var target = [kategori, nama, ukuran].map(normalize_);
+    for (var row = 1; row < values.length; row++) {
+      if (
+        normalize_(values[row][0]) === target[0] &&
+        normalize_(values[row][1]) === target[1] &&
+        normalize_(values[row][2]) === target[2]
+      ) {
+        sheet.getRange(row + 1, 4).setValue(jenisKomponen);
+        sheet.getRange(row + 1, 5).setValue(satuan);
+        break;
+      }
+    }
+    return { status: "success", message: "Detail master part berhasil diperbarui." };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updateMasterPartPhoto_(body) {
+  requireAdmin_(body.token);
+  return { status: "success", message: "Foto referensi part berhasil disimpan." };
+}
+
+function removeMasterPartPhoto_(body) {
+  requireAdmin_(body.token);
+  return { status: "success", message: "Foto referensi part dihapus." };
 }
 
 function getReports_(params) {

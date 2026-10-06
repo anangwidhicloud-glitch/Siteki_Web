@@ -70,18 +70,37 @@ export function summarizeMonthlyReactiveEnergy(checks,{year=new Date().getFullYe
     conclusion:"AMAN",checkCount:0,lastEntryDay:null,isPartial:Boolean(today&&today.year===selectedYear&&today.month===index+1),
   }));
 
+  const checksByDay = new Map();
   for (const check of checks||[]) {
     const parts=jakartaDateParts(check.checked_at??check.tanggal);
     if (!parts||parts.year!==selectedYear||parts.month<1||parts.month>12) continue;
     let assessment;
     try { assessment=calculateElectricityAssessment(check); }
     catch { continue; }
-    const summary=summaries[parts.month-1];
-    summary.activeKwh+=assessment.activeKwh;
-    summary.reactiveKvarh+=assessment.reactiveKvarh;
-    summary.checkCount+=1;
-    summary.lastEntryDay=Math.max(summary.lastEntryDay||0,parts.day);
+    const dateKey = `${parts.year}-${String(parts.month).padStart(2,"0")}-${String(parts.day).padStart(2,"0")}`;
+    if (!checksByDay.has(dateKey)) checksByDay.set(dateKey, []);
+    checksByDay.get(dateKey).push({ check, parts, assessment });
   }
+
+  checksByDay.forEach((dayChecks) => {
+    dayChecks.sort((a, b) => {
+      const timeA = String(a.check.checked_at || a.check.jam || a.check.tanggal || "");
+      const timeB = String(b.check.checked_at || b.check.jam || b.check.tanggal || "");
+      return timeA.localeCompare(timeB);
+    });
+
+    const firstHasContent = (dayChecks[0].assessment.activeKwh > 0 || dayChecks[0].assessment.reactiveKvarh > 0);
+    const chosen = firstHasContent
+      ? dayChecks[0]
+      : (dayChecks.find(item => item.assessment.activeKwh > 0 || item.assessment.reactiveKvarh > 0) || dayChecks[0]);
+
+    const { parts, assessment } = chosen;
+    const summary = summaries[parts.month - 1];
+    summary.activeKwh += assessment.activeKwh;
+    summary.reactiveKvarh += assessment.reactiveKvarh;
+    summary.checkCount += dayChecks.length;
+    summary.lastEntryDay = Math.max(summary.lastEntryDay || 0, parts.day);
+  });
 
   return summaries.map(summary=>{
     const reactiveLimitKvarh=summary.activeKwh*PLN_REACTIVE_RATIO;

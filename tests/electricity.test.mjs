@@ -76,3 +76,19 @@ test("status bulanan berdasarkan total aktual terhadap batas 62 persen", () => {
   assert.equal(january.conclusion,"POTENSI DENDA");
   assert.equal(january.isPartial,false);
 });
+
+test("hanya mengambil 1 isian per hari: utamakan isian 1 jika berisi, fallback ke isian 2 jika isian 1 kosong", () => {
+  const data=summarizeMonthlyReactiveEnergy([
+    // Hari 1: Isian 1 (08:00) berisi, Isian 2 (16:00) juga berisi -> Ambil Isian 1 saja
+    {checked_at:"2026-04-01T08:00:00+07:00",huhe_h:150,huhe_hh:100,huar_heh:35,huar_hh:10}, // active=50, reactive=25
+    {checked_at:"2026-04-01T16:00:00+07:00",huhe_h:200,huhe_hh:150,huar_heh:60,huar_hh:35}, // active=50, reactive=25
+
+    // Hari 2: Isian 1 (08:00) kosong (0/0), Isian 2 (16:00) berisi -> Fallback ke Isian 2
+    {checked_at:"2026-04-02T08:00:00+07:00",huhe_h:200,huhe_hh:200,huar_heh:60,huar_hh:60}, // active=0, reactive=0
+    {checked_at:"2026-04-02T16:00:00+07:00",huhe_h:240,huhe_hh:200,huar_heh:80,huar_hh:60}, // active=40, reactive=20
+  ],{year:2026,now:new Date("2026-05-14T10:00:00+07:00")});
+
+  // Total bulan April: Hari 1 (50 kWh, 25 kVArh) + Hari 2 (40 kWh, 20 kVArh) = 90 kWh, 45 kVArh
+  assert.equal(data[3].activeKwh, 90);
+  assert.equal(data[3].reactiveKvarh, 45);
+});

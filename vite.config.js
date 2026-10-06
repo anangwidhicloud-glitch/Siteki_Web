@@ -5,11 +5,21 @@ export default defineConfig({
   plugins: [react()],
   base: "./",
   build: {
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ["react", "react-dom"]
+        manualChunks(id) {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) {
+            return "react";
+          }
+          if (
+            id.includes("node_modules/exceljs") ||
+            id.includes("src/lib/dataWorkbook") ||
+            id.includes("src/lib/directWorkbook") ||
+            id.includes("src/lib/workbookLoader")
+          ) {
+            return "workbook";
+          }
         }
       }
     }

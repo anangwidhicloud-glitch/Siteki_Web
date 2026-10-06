@@ -1,6 +1,7 @@
 name = "siteki-neon-api"
 main = "worker/siteki-api.js"
 compatibility_date = "2026-08-03"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
-ALLOWED_ORIGINS = "https://siteki.xo.je,https://siteki-web.pages.dev,http://localhost:5173,http://localhost:4173"
+ALLOWED_ORIGINS = "https://siteki.xo.je,https://siteki-web.pages.dev,http://localhost:5173,http://localhost:4173,https://localhost,capacitor://localhost,http://localhost"

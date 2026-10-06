@@ -12,6 +12,10 @@
     "worker:check": "wrangler deploy --dry-run",
     "worker:smoke": "node scripts/smoke-neon-api.mjs",
     "worker:deploy": "wrangler deploy",
+    "worker:secrets:cloudinary": "node scripts/sync-cloudinary-secrets.mjs",
+    "push:setup": "node scripts/setup-web-push.mjs",
+    "worker:secrets:push": "node scripts/sync-push-secrets.mjs",
+    "frontend:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-infinityfree.ps1",
     "worker:verify": "node scripts/verify-oil-worker.mjs",
     "backup:verify": "node scripts/verify-backup.mjs",
     "check:connections": "node scripts/check-connections.mjs",
@@ -19,6 +23,7 @@
     "db:import:master": "node scripts/import-machine-users.mjs",
     "db:verify:master": "node scripts/verify-master-data.mjs",
     "db:import:inventory": "node scripts/import-parts-stock.mjs",
+    "db:sync:part-units": "node scripts/sync-part-units.mjs --apply",
     "db:verify:inventory": "node scripts/verify-inventory.mjs",
     "db:import:reports": "node scripts/import-work-reports.mjs",
     "db:verify:reports": "node scripts/verify-report-kpi.mjs",
@@ -47,7 +52,8 @@
     "lucide-react": "^0.468.0",
     "pg": "^8.22.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

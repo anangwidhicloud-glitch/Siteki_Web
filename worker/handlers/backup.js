@@ -124,16 +124,6 @@ const MAINTENANCE_EXISTS=`
     SELECT 1 FROM maintenance_inspections saved
     WHERE saved.inspected_on=input.inspected_on
       AND lower(btrim(saved.machine_name))=lower(btrim(input.machine_name))
-      AND (
-        (
-          lower(btrim(saved.machine_category))=lower(btrim(input.machine_category))
-          AND lower(btrim(coalesce(saved.machine_type,'')))=lower(btrim(coalesce(input.machine_type,'')))
-          AND lower(btrim(coalesce(saved.schedule_code,'')))=lower(btrim(coalesce(input.schedule_code,'')))
-        ) OR (
-          saved.source_sheet IN ('Mesin','Armada')
-          AND (lower(btrim(coalesce(saved.machine_type,'')))='x' OR lower(btrim(coalesce(saved.schedule_code,'')))='x')
-        )
-      )
   )`;
 
 const WORK_REPORT_EXISTS=`
@@ -172,14 +162,15 @@ export async function validateDirectMaintenance(sql,rows) {
       )
     )
     SELECT count(*)::integer AS processed,
-      count(*) FILTER (WHERE ${MAINTENANCE_EXISTS})::integer AS skipped,
-      count(*) FILTER (WHERE NOT ${MAINTENANCE_EXISTS})::integer AS inserted,
+      0::integer AS skipped,
+      count(*)::integer AS inserted,
       count(*) FILTER (WHERE NOT EXISTS (
         SELECT 1 FROM machines machine WHERE lower(btrim(machine.name))=lower(btrim(input.machine_name))
       ))::integer AS unmatched_machines,
       coalesce(jsonb_agg(jsonb_build_object(
-        'source_row',input.source_row,'inspected_on',input.inspected_on,'machine_name',input.machine_name,'schedule_code',input.schedule_code
-      ) ORDER BY input.inspected_on,input.machine_name) FILTER (WHERE NOT ${MAINTENANCE_EXISTS}),'[]'::jsonb) AS candidate_rows
+        'source_row',input.source_row,'inspected_on',input.inspected_on,'machine_name',input.machine_name,'schedule_code',input.schedule_code,
+        'is_update',(${MAINTENANCE_EXISTS})
+      ) ORDER BY input.inspected_on,input.machine_name),'[]'::jsonb) AS candidate_rows
     FROM input`,[JSON.stringify(payload)]);
   return result[0]||{};
 }
@@ -197,8 +188,8 @@ export async function validateDirectWorkReports(sql,rows) {
       )
     )
     SELECT count(*)::integer AS processed,
-      count(*) FILTER (WHERE ${WORK_REPORT_EXISTS})::integer AS skipped,
-      count(*) FILTER (WHERE NOT ${WORK_REPORT_EXISTS})::integer AS inserted,
+      0::integer AS skipped,
+      count(*)::integer AS inserted,
       count(*) FILTER (WHERE NOT EXISTS (
         SELECT 1 FROM machines machine WHERE lower(btrim(machine.name))=lower(btrim(input.machine_name))
       ))::integer AS unmatched_machines,
@@ -216,8 +207,9 @@ export async function validateDirectWorkReports(sql,rows) {
         AND abs(extract(epoch FROM (input.finished_at-input.started_at))/3600-input.total_hours)>0.06
       ))::integer AS duration_anomalies,
       coalesce(jsonb_agg(jsonb_build_object(
-        'source_row',input.source_row,'report_date',input.report_date,'machine_name',input.machine_name,'work_description',input.work_description
-      ) ORDER BY input.report_date,input.machine_name) FILTER (WHERE NOT ${WORK_REPORT_EXISTS}),'[]'::jsonb) AS candidate_rows
+        'source_row',input.source_row,'report_date',input.report_date,'machine_name',input.machine_name,'work_description',input.work_description,
+        'is_update',(${WORK_REPORT_EXISTS})
+      ) ORDER BY input.report_date,input.machine_name),'[]'::jsonb) AS candidate_rows
     FROM input`,[JSON.stringify(payload)]);
   return result[0]||{};
 }
@@ -231,27 +223,28 @@ export function maintenanceInsert(row) {
             ORDER BY (lower(btrim(coalesce(category,'')))=lower(btrim($2)) AND lower(btrim(coalesce(machine_type,'')))=lower(btrim($3))) DESC LIMIT 1) AS machine_id,
           (SELECT id FROM maintenance_plans WHERE planned_on=$1::date AND lower(btrim(machine_name))=lower(btrim($4))
             ORDER BY (lower(btrim(coalesce(schedule_code,'')))=lower(btrim($5))) DESC LIMIT 1) AS plan_id
+      ), deleted_old AS (
+        DELETE FROM maintenance_inspections
+        WHERE inspected_on=$1::date
+          AND lower(btrim(machine_name))=lower(btrim($4))
+          AND (
+            (
+              lower(btrim(machine_category))=lower(btrim($2))
+              AND lower(btrim(coalesce(machine_type,'')))=lower(btrim(coalesce($3,'')))
+              AND lower(btrim(coalesce(schedule_code,'')))=lower(btrim(coalesce($5,'')))
+            ) OR (
+              source_sheet IN ('Mesin','Armada')
+              AND (lower(btrim(coalesce(machine_type,'')))='x' OR lower(btrim(coalesce(schedule_code,'')))='x')
+            )
+          )
+        RETURNING id
       ), inserted AS (
         INSERT INTO maintenance_inspections (
           plan_id,machine_id,inspected_on,machine_category,machine_type,machine_name,schedule_code,
           maintenance_type,notes,source_sheet,legacy_sheet_row,legacy_data
         )
-        SELECT refs.plan_id,refs.machine_id,$1::date,$2,$3,$4,$5,$6,$7,'Excel det_rawat',NULL,$8::jsonb FROM refs
-        WHERE NOT EXISTS (
-          SELECT 1 FROM maintenance_inspections saved
-          WHERE saved.inspected_on=$1::date
-            AND lower(btrim(saved.machine_name))=lower(btrim($4))
-            AND (
-              (
-                lower(btrim(saved.machine_category))=lower(btrim($2))
-                AND lower(btrim(coalesce(saved.machine_type,'')))=lower(btrim(coalesce($3,'')))
-                AND lower(btrim(coalesce(saved.schedule_code,'')))=lower(btrim(coalesce($5,'')))
-              ) OR (
-                saved.source_sheet IN ('Mesin','Armada')
-                AND (lower(btrim(coalesce(saved.machine_type,'')))='x' OR lower(btrim(coalesce(saved.schedule_code,'')))='x')
-              )
-            )
-        ) RETURNING id
+        SELECT refs.plan_id,refs.machine_id,$1::date,$2,$3,$4,$5,$6,$7,'Excel det_rawat',NULL,coalesce($8::jsonb,'{}'::jsonb) FROM refs
+        RETURNING id
       ), saved_results AS (
         INSERT INTO maintenance_check_results (inspection_id,item_id,status,raw_status)
         SELECT inserted.id,item.id,
@@ -268,9 +261,11 @@ export function maintenanceInsert(row) {
           WHERE lower(btrim(machine_category))=lower(btrim($2)) AND lower(btrim(name))=lower(btrim(entry.name))
           ORDER BY sort_order LIMIT 1
         ) item ON true
-        ON CONFLICT (inspection_id,item_id) DO NOTHING RETURNING 1
+        ON CONFLICT (inspection_id,item_id) DO UPDATE SET status=EXCLUDED.status, raw_status=EXCLUDED.raw_status
+        RETURNING 1
       )
       SELECT (SELECT count(*) FROM inserted)::integer AS inserted,
+        (SELECT count(*) FROM deleted_old)::integer AS deleted,
         (SELECT count(*) FROM saved_results)::integer AS result_count`,
     values:[row.inspected_on,row.machine_category,row.machine_type,row.machine_name,row.schedule_code,
       row.maintenance_type,row.notes,row.metadata,JSON.stringify(row.checks)],
@@ -334,7 +329,7 @@ export function workReportInsert(row) {
 
 async function importDirectDataset(sql,body) {
   if(!Array.isArray(body.rows)||!body.rows.length)throw new HttpError(400,"Tidak ada baris yang dapat diimpor.");
-  if(body.rows.length>100)throw new HttpError(413,"Maksimal 100 baris Excel per proses impor.");
+  if(body.rows.length>5000)throw new HttpError(413,"Maksimal 5.000 baris Excel per proses impor.");
   const documentType=text(body.documentType,50);
   const maintenance=documentType==="maintenance";
   if(!maintenance&&documentType!=="work_reports")throw new HttpError(400,"Jenis dokumen Excel tidak dikenal.");
@@ -349,7 +344,17 @@ async function importDirectDataset(sql,body) {
       warnings:{unmatchedMachines:Number(result.unmatched_machines||0),unmatchedParts:Number(result.unmatched_parts||0),
         timeAnomalies:Number(result.time_anomalies||0),durationAnomalies:Number(result.duration_anomalies||0)}};
   }
-  const statements=prepared.map(row=>maintenance?maintenanceInsert(row):workReportInsert(row));
+  let statements=prepared.map(row=>maintenance?maintenanceInsert(row):workReportInsert(row));
+  if(maintenance){
+    const months=Array.from(new Set(prepared.map(row=>row.inspected_on.slice(0,7)))).filter(Boolean);
+    if(months.length>0){
+      const deleteStatement={
+        statement:`DELETE FROM maintenance_inspections WHERE to_char(inspected_on, 'YYYY-MM') = ANY($1::text[])`,
+        values:[months],
+      };
+      statements=[deleteStatement,...statements];
+    }
+  }
   try{
     const results=await sql.transaction(statements.map(item=>sql.query(item.statement,item.values)));
     const inserted=results.reduce((total,result)=>total+Number(result[0]?.inserted||0),0);
@@ -381,7 +386,17 @@ export function prepareImportRow(row, columns, keyColumns) {
 export function buildUpsertStatement(dataset, columns, row) {
   const {source,hasKey}=prepareImportRow(row,columns,dataset.keyColumns);
   const generatedId=dataset.keyColumns.length===1&&dataset.keyColumns[0]==="id";
-  if(generatedId&&hasKey)return {statement:"",values:[],mode:"skip"};
+  if(generatedId&&hasKey){
+    const updateCols=Object.keys(source).filter(col=>!dataset.keyColumns.includes(col));
+    if(updateCols.length>0){
+      const names=Object.keys(source);
+      const values=names.map(name=>source[name]);
+      const setClause=updateCols.map(col=>`${quoteIdentifier(col)}=EXCLUDED.${quoteIdentifier(col)}`).join(",");
+      const conflictKeys=dataset.keyColumns.map(quoteIdentifier).join(",");
+      const statement=`INSERT INTO ${quoteIdentifier(dataset.table)} (${names.map(quoteIdentifier).join(",")}) VALUES (${names.map((_,index)=>`$${index+1}`).join(",")}) ON CONFLICT (${conflictKeys}) DO UPDATE SET ${setClause} RETURNING 1`;
+      return {statement,values,mode:"insert"};
+    }
+  }
   const names=Object.keys(source);
   const values=names.map(name=>source[name]);
   const statement=`INSERT INTO ${quoteIdentifier(dataset.table)} (${names.map(quoteIdentifier).join(",")}) VALUES (${names.map((_,index)=>`$${index+1}`).join(",")}) ON CONFLICT DO NOTHING RETURNING 1`;
