@@ -2613,6 +2613,171 @@ td b,td small { display:block; }td b { color:var(--ink);font-size:11px; }td smal
   background: #e4f5ed;
 }
 
+/* Schedule IO Actions (Download & Upload) */
+.schedule-search-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+  flex-wrap: wrap;
+}
+.schedule-search-top .eyebrow {
+  margin-bottom: 0;
+}
+.schedule-io-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.schedule-io-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid var(--line);
+  line-height: 1;
+}
+.schedule-io-btn.download {
+  background: var(--surface);
+  color: var(--ink);
+}
+.schedule-io-btn.download:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--mint-dark);
+  color: var(--mint-dark);
+}
+.schedule-io-btn.upload {
+  background: var(--mint-dark);
+  color: #0b1a13;
+  border-color: var(--mint-dark);
+}
+.schedule-io-btn.upload:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.schedule-io-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+:root[data-theme="dark"] .schedule-io-btn.download {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #f1f5f9;
+}
+:root[data-theme="dark"] .schedule-io-btn.download:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #34d399;
+}
+
+.schedule-bar-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.schedule-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid var(--line);
+  line-height: 1;
+  background: white;
+  color: var(--ink);
+}
+.schedule-action-btn:hover:not(:disabled) {
+  border-color: var(--mint-dark);
+  background: #effaf6;
+  color: var(--mint-dark);
+}
+.schedule-action-btn.primary {
+  background: var(--mint-dark);
+  color: #0b1a13;
+  border-color: var(--mint-dark);
+}
+.schedule-action-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.schedule-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+:root[data-theme="dark"] .schedule-action-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #f1f5f9;
+}
+:root[data-theme="dark"] .schedule-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #34d399;
+}
+
+/* Modal for Upload Revisi Rekap Perawatan */
+.schedule-upload-modal {
+  max-width: 500px;
+  width: 95%;
+}
+.schedule-upload-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 14px 0;
+}
+.schedule-upload-card {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.schedule-upload-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  margin-bottom: 3px;
+}
+.schedule-upload-card b {
+  font-size: 13px;
+  color: var(--ink);
+}
+:root[data-theme="dark"] .schedule-upload-card b {
+  color: #f1f5f9;
+}
+.schedule-upload-alert {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 11px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1.55;
+  margin-bottom: 16px;
+}
+:root[data-theme="dark"] .schedule-upload-alert {
+  color: #fde68a;
+}
+.schedule-upload-alert svg {
+  flex: none;
+  color: #f59e0b;
+}
+
 .maintenance-matrix-panel:fullscreen,
 .maintenance-matrix-panel:-webkit-full-screen,
 .maintenance-matrix-panel.is-fullscreen {

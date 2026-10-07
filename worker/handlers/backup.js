@@ -12,7 +12,6 @@ const DATASETS = [
   ["stock_movements","Pemakaian Part","stock_movements",["id"]],
   ["maintenance_check_items","Item Perawatan","maintenance_check_items",["id"]],
   ["maintenance_plans","Rencana Perawatan","maintenance_plans",["id"]],
-  ["maintenance_inspections","Inspeksi Perawatan","maintenance_inspections",["id"]],
   ["maintenance_check_results","Hasil Perawatan","maintenance_check_results",["inspection_id","item_id"]],
   ["maintenance_monthly_targets","Target Perawatan","maintenance_monthly_targets",["month"]],
   ["kpi_monthly_targets","Target KPI","kpi_monthly_targets",["month"]],
@@ -345,11 +344,13 @@ async function importDirectDataset(sql,body) {
         timeAnomalies:Number(result.time_anomalies||0),durationAnomalies:Number(result.duration_anomalies||0)}};
   }
   let statements=prepared.map(row=>maintenance?maintenanceInsert(row):workReportInsert(row));
+  let months=[];
   if(maintenance){
-    const months=Array.from(new Set(prepared.map(row=>row.inspected_on.slice(0,7)))).filter(Boolean);
+    const requestedMonths = Array.isArray(body.months) ? body.months : (body.month ? [body.month] : []);
+    months=Array.from(new Set([...requestedMonths, ...prepared.map(row=>row.inspected_on.slice(0,7))])).filter(Boolean);
     if(months.length>0){
       const deleteStatement={
-        statement:`DELETE FROM maintenance_inspections WHERE to_char(inspected_on, 'YYYY-MM') = ANY($1::text[])`,
+        statement:`DELETE FROM maintenance_inspections WHERE to_char(inspected_on, 'YYYY-MM') = ANY($1::text[]) RETURNING id`,
         values:[months],
       };
       statements=[deleteStatement,...statements];
@@ -357,8 +358,10 @@ async function importDirectDataset(sql,body) {
   }
   try{
     const results=await sql.transaction(statements.map(item=>sql.query(item.statement,item.values)));
-    const inserted=results.reduce((total,result)=>total+Number(result[0]?.inserted||0),0);
-    return {status:"success",processed:prepared.length,inserted,skipped:prepared.length-inserted};
+    const deleted=maintenance && months.length>0 ? Number(results[0]?.length || 0) : 0;
+    const insertedResults = maintenance && months.length>0 ? results.slice(1) : results;
+    const inserted=insertedResults.reduce((total,result)=>total+Number(result[0]?.inserted||0),0);
+    return {status:"success",processed:prepared.length,inserted,deleted,skipped:prepared.length-inserted};
   }catch(error){
     console.error("direct workbook import",documentType,error);
     throw new HttpError(400,`Impor ${maintenance?"Rekap Perawatan":"Laporan Kerja"} dibatalkan. Periksa data dan referensi master.`);
@@ -421,8 +424,7 @@ async function manifest(sql) {
   return DATASETS.map(dataset=>({
     ...dataset,
     count:countByKey.get(dataset.key)||0,
-    operationalFormat:dataset.key==="maintenance_inspections"?"maintenance":
-      dataset.key==="work_reports"?"work_reports":null,
+    operationalFormat:dataset.key==="work_reports"?"work_reports":null,
     columns:allColumns
       .filter(column=>column.table_name===dataset.table&&!HIDDEN_COLUMNS.has(column.column_name))
       .map(column=>({name:column.column_name,type:column.data_type,required:column.is_nullable==="NO"&&!column.column_default})),
@@ -439,8 +441,11 @@ async function exportDataset(sql,key) {
   return {dataset:{...dataset,columns},rows};
 }
 
-export async function exportDirectDataset(sql,documentType){
+export async function exportDirectDataset(sql,documentType,monthFilter){
   if(documentType==="maintenance"){
+    const month = monthFilter && /^\d{4}-\d{2}$/.test(monthFilter) ? monthFilter : null;
+    const whereClause = month ? `WHERE to_char(inspection.inspected_on, 'YYYY-MM') = $1` : ``;
+    const params = month ? [month] : [];
     const [items,rows]=await Promise.all([
       sql.query(`SELECT machine_category,name,sort_order
         FROM maintenance_check_items
@@ -459,8 +464,9 @@ export async function exportDirectDataset(sql,documentType){
         FROM maintenance_inspections inspection
         LEFT JOIN maintenance_check_results result ON result.inspection_id=inspection.id
         LEFT JOIN maintenance_check_items item ON item.id=result.item_id
+        ${whereClause}
         GROUP BY inspection.id
-        ORDER BY inspection.inspected_on,inspection.machine_category,inspection.machine_type,inspection.machine_name`),
+        ORDER BY inspection.inspected_on,inspection.machine_category,inspection.machine_type,inspection.machine_name`, params),
     ]);
     return {documentType,filename:"Rekap Perawatan.xlsx",sheet:"det_rawat",items,rows};
   }
@@ -509,13 +515,13 @@ async function importDataset(sql,body) {
 }
 
 export async function handleBackup({request,env,url,body}) {
-  await requireSession(request,env,body,["admin"]);
+  await requireSession(request,env,body,["admin","teknik"]);
   const sql=database(env);
   if(request.method==="GET"){
     const action=text(url.searchParams.get("action"),30)||"manifest";
     if(action==="manifest")return {status:"success",version:1,datasets:await manifest(sql)};
     if(action==="export")return {status:"success",...(await exportDataset(sql,text(url.searchParams.get("dataset"),100)))};
-    if(action==="direct-export")return {status:"success",...(await exportDirectDataset(sql,text(url.searchParams.get("documentType"),50)))};
+    if(action==="direct-export")return {status:"success",...(await exportDirectDataset(sql,text(url.searchParams.get("documentType"),50),text(url.searchParams.get("month"),7)))};
     throw new HttpError(400,"Aksi backup tidak dikenal.");
   }
   if(request.method==="POST"&&body.action==="direct-import")return importDirectDataset(sql,body);

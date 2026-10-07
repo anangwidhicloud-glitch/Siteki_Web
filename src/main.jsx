@@ -2939,6 +2939,9 @@ function Schedule({ go, notify, session }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [activePopover, setActivePopover] = useState(null);
+  const [ioBusy, setIoBusy] = useState("");
+  const [uploadModal, setUploadModal] = useState(null);
+  const uploadInputRef = useRef(null);
   const hoverTimerRef = useRef(null);
   const closeTimerRef = useRef(null);
   const matrixScrollRef = useRef(null);
@@ -3146,9 +3149,128 @@ function Schedule({ go, notify, session }) {
     }
   }, [openForm]);
 
+  const downloadMonthlyInspection = async () => {
+    const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const monthLabel = `${SCHEDULE_MONTHS[month]} ${year}`;
+    setIoBusy("download");
+    try {
+      const { createDirectBackupWorkbook, downloadWorkbook } = await loadDataWorkbook();
+      const payload = await apiGet(
+        ENDPOINTS.backup,
+        { action: "direct-export", documentType: "maintenance", month: monthKey },
+        { cache: false, timeout: 120000 }
+      );
+      const file = await createDirectBackupWorkbook("maintenance", payload);
+      downloadWorkbook(file.buffer, "Rekap Perawatan.xlsx");
+      notify(`Data Inspeksi Perawatan ${monthLabel} (${payload.rows?.length || 0} baris) berhasil diunduh.`);
+    } catch (error) {
+      notify(error?.message || "Gagal mengunduh data inspeksi.");
+    } finally {
+      setIoBusy("");
+    }
+  };
+
+  const onChooseExcelFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setIoBusy("validate");
+    try {
+      const { parseDirectWorkbook } = await loadDirectWorkbook();
+      const parsed = await parseDirectWorkbook(file);
+      if (parsed.datasets?.[0]?.documentType !== "maintenance") {
+        throw new Error("File yang dipilih bukan Rekap Perawatan. Pastikan memilih file Rekap Perawatan.xlsx.");
+      }
+      const rows = parsed.datasets[0].rows || [];
+      if (!rows.length) {
+        throw new Error("File Rekap Perawatan tidak memiliki baris data.");
+      }
+      const monthsInFile = Array.from(new Set(rows.map(r => r.inspected_on?.slice(0, 7)))).filter(Boolean).sort();
+      setUploadModal({
+        file,
+        parsed,
+        rows,
+        monthsInFile,
+      });
+    } catch (error) {
+      notify(error?.message || "File Excel tidak dapat dibaca.");
+    } finally {
+      setIoBusy("");
+    }
+  };
+
+  const handleConfirmUpload = async () => {
+    if (!uploadModal) return;
+    setIoBusy("import");
+    try {
+      const result = await apiPost(
+        ENDPOINTS.backup,
+        {
+          action: "direct-import",
+          documentType: "maintenance",
+          rows: uploadModal.rows,
+          months: uploadModal.monthsInFile,
+        },
+        { timeout: 120000 }
+      );
+      if (result.status !== "success") {
+        throw new Error(result.message || "Gagal mengunggah data.");
+      }
+      const deletedMsg = result.deleted ? `${result.deleted.toLocaleString("id-ID")} data lama dihapus. ` : "";
+      const insertedMsg = `${Number(result.inserted || 0).toLocaleString("id-ID")} data baru berhasil diperbarui.`;
+      notify(`${deletedMsg}${insertedMsg}`);
+      setUploadModal(null);
+      remote.reload();
+    } catch (error) {
+      notify(error?.message || "Gagal mengunggah data revisi.");
+    } finally {
+      setIoBusy("");
+    }
+  };
+
+  const formatMonthKey = (key) => {
+    if (!key) return "";
+    const [y, m] = key.split("-").map(Number);
+    if (!y || !m) return key;
+    return `${SCHEDULE_MONTHS[m - 1] || m} ${y}`;
+  };
+
   return <>
     <div className="schedule-search">
-      <span className="eyebrow">Pencarian data metric</span>
+      <div className="schedule-search-top">
+        <span className="eyebrow">Pencarian data metric</span>
+        {isAdmin && (
+          <div className="schedule-io-actions">
+            <button
+              type="button"
+              className="schedule-io-btn download"
+              onClick={downloadMonthlyInspection}
+              disabled={!!ioBusy}
+              title={`Download data inspeksi perawatan ${SCHEDULE_MONTHS[month]} ${year} (Excel)`}
+            >
+              <Download size={14} />
+              <span>{ioBusy === "download" ? "Mengunduh..." : `Download ${SCHEDULE_MONTHS[month]} ${year}`}</span>
+            </button>
+            <button
+              type="button"
+              className="schedule-io-btn upload"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={!!ioBusy}
+              title={`Upload revisi Excel inspeksi perawatan ${SCHEDULE_MONTHS[month]} ${year}`}
+            >
+              <Upload size={14} />
+              <span>Upload Revisi Excel</span>
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              style={{ display: "none" }}
+              onChange={onChooseExcelFile}
+            />
+          </div>
+        )}
+      </div>
       <div>
         <label><span>Bulan</span><select value={month} onChange={e => setMonth(Number(e.target.value))}>{SCHEDULE_MONTHS.map((name, i) => <option value={i} key={name}>{name}</option>)}</select></label>
         <label className="year-field"><span>Tahun</span><select value={year} onChange={e => setYear(Number(e.target.value))}>{years.map(value => <option key={value}>{value}</option>)}</select></label>
@@ -3198,15 +3320,41 @@ function Schedule({ go, notify, session }) {
           <span>Pencapaian: <b>{monthlyStats.percentage}%</b></span>
         </div>
       </div>
-      <button
-        type="button"
-        className="matrix-fullscreen-btn"
-        onClick={toggleFullscreen}
-        title={isFullscreen ? "Keluar layar penuh" : "Tampilkan tabel jadwal layar penuh"}
-      >
-        {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        <span>{isFullscreen ? "Perkecil" : "Layar penuh"}</span>
-      </button>
+      <div className="schedule-bar-right-actions">
+        {isAdmin && (
+          <>
+            <button
+              type="button"
+              className="schedule-action-btn"
+              onClick={downloadMonthlyInspection}
+              disabled={!!ioBusy}
+              title={`Download data inspeksi perawatan ${SCHEDULE_MONTHS[month]} ${year} (Excel)`}
+            >
+              <Download size={14} />
+              <span>{ioBusy === "download" ? "Mengunduh..." : "Download Excel"}</span>
+            </button>
+            <button
+              type="button"
+              className="schedule-action-btn primary"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={!!ioBusy}
+              title="Upload file Excel Rekap Perawatan yang sudah direvisi"
+            >
+              <Upload size={14} />
+              <span>Upload Revisi</span>
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          className="matrix-fullscreen-btn"
+          onClick={toggleFullscreen}
+          title={isFullscreen ? "Keluar layar penuh" : "Tampilkan tabel jadwal layar penuh"}
+        >
+          {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          <span>{isFullscreen ? "Perkecil" : "Layar penuh"}</span>
+        </button>
+      </div>
     </div>
     <section className={`maintenance-matrix-panel ${isFullscreen ? "is-fullscreen" : ""}`} ref={panelRef}>
       {isFullscreen && (
@@ -3299,6 +3447,66 @@ function Schedule({ go, notify, session }) {
         onDeleted={() => remote.reload()}
         onClose={() => setSelectedRecord(null)}
       />
+    )}
+    {uploadModal && (
+      <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && ioBusy !== "import" && setUploadModal(null)}>
+        <article className="modal-card schedule-upload-modal">
+          <div className="modal-head">
+            <div>
+              <p className="eyebrow">Khusus Administrator</p>
+              <h3>Upload Revisi Rekap Perawatan</h3>
+              <small>Sinkronisasi data hasil revisi Excel</small>
+            </div>
+            <button type="button" disabled={ioBusy === "import"} onClick={() => setUploadModal(null)} aria-label="Tutup modal">
+              <X size={18} />
+            </button>
+          </div>
+          <div className="schedule-upload-summary">
+            <div className="schedule-upload-card">
+              <small>File Excel</small>
+              <b>{uploadModal.file.name}</b>
+            </div>
+            <div className="schedule-upload-card">
+              <small>Jumlah Baris Data</small>
+              <b>{uploadModal.rows.length.toLocaleString("id-ID")} baris</b>
+            </div>
+            <div className="schedule-upload-card" style={{ gridColumn: "1 / -1" }}>
+              <small>Periode Bulan Terdeteksi</small>
+              <b>{uploadModal.monthsInFile.map(formatMonthKey).join(", ") || "-"}</b>
+            </div>
+          </div>
+          <div className="schedule-upload-alert">
+            <AlertTriangle size={18} />
+            <div>
+              <strong>Pembersihan Data Lama Otomatis</strong>
+              <p style={{ margin: "4px 0 0" }}>
+                Seluruh data inspeksi perawatan lama pada bulan <b>{uploadModal.monthsInFile.map(formatMonthKey).join(", ")}</b> akan <b>dihapus terlebih dahulu</b> dari database, kemudian <b>{uploadModal.rows.length.toLocaleString("id-ID")} data baru</b> akan dimasukkan.
+              </p>
+              <small style={{ display: "block", marginTop: "4px", opacity: 0.9 }}>
+                Hal ini menjamin tidak terjadi data ganda (duplikat).
+              </small>
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="secondary" disabled={ioBusy === "import"} onClick={() => setUploadModal(null)}>
+              Batal
+            </button>
+            <button type="button" className="primary" disabled={ioBusy === "import"} onClick={handleConfirmUpload}>
+              {ioBusy === "import" ? (
+                <>
+                  <span className="spinner" />
+                  <span>Memproses upload...</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={16} />
+                  <span>Hapus Data Lama & Upload Baru</span>
+                </>
+              )}
+            </button>
+          </div>
+        </article>
+      </div>
     )}
   </>;
 }
@@ -6443,11 +6651,16 @@ function SettingsPage({ notify, themeMode, onThemeChange, session }) {
         <button type="button" className="primary" onClick={() => inputRef.current?.click()} disabled={!!backupBusy}><FilePlus2 size={17} />{backupBusy === "validate" ? "Membaca..." : "Pilih file untuk upload"}</button>
         <input ref={inputRef} className="backup-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={chooseWorkbook} />
       </div>
-        {showDownloadPicker && backupManifest && <div className="backup-picker">
-          <div className="backup-picker-head"><div><b>Pilih data yang akan di-download</b><small>{downloadSelection.size} dari {backupManifest.datasets.length} dipilih</small></div><div><button type="button" onClick={() => setDownloadSelection(new Set(backupManifest.datasets.map(dataset => dataset.key)))}>Pilih semua</button><button type="button" onClick={() => setDownloadSelection(new Set())}>Kosongkan</button></div></div>
-          <div className="backup-dataset-grid">{backupManifest.datasets.map(dataset => <label key={dataset.key} className={downloadSelection.has(dataset.key) ? "selected" : ""}><input type="checkbox" checked={downloadSelection.has(dataset.key)} onChange={() => toggleSelection(setDownloadSelection, dataset.key)} /><span><b>{dataset.label}</b><small>{Number(dataset.count || 0).toLocaleString("id-ID")} baris{dataset.operationalFormat ? " · format master siap upload" : ""}</small></span></label>)}</div>
-          <button type="button" className="primary backup-confirm" onClick={downloadSelected} disabled={!downloadSelection.size || !!backupBusy}><Download size={16} />Download {downloadSelection.size} data pilihan</button>
-        </div>}
+        {showDownloadPicker && backupManifest && (() => {
+          const visibleDatasets = backupManifest.datasets.filter(d => d.key !== "maintenance_inspections");
+          return (
+            <div className="backup-picker">
+              <div className="backup-picker-head"><div><b>Pilih data yang akan di-download</b><small>{downloadSelection.size} dari {visibleDatasets.length} dipilih</small></div><div><button type="button" onClick={() => setDownloadSelection(new Set(visibleDatasets.map(dataset => dataset.key)))}>Pilih semua</button><button type="button" onClick={() => setDownloadSelection(new Set())}>Kosongkan</button></div></div>
+              <div className="backup-dataset-grid">{visibleDatasets.map(dataset => <label key={dataset.key} className={downloadSelection.has(dataset.key) ? "selected" : ""}><input type="checkbox" checked={downloadSelection.has(dataset.key)} onChange={() => toggleSelection(setDownloadSelection, dataset.key)} /><span><b>{dataset.label}</b><small>{Number(dataset.count || 0).toLocaleString("id-ID")} baris{dataset.operationalFormat ? " · format master siap upload" : ""}</small></span></label>)}</div>
+              <button type="button" className="primary backup-confirm" onClick={downloadSelected} disabled={!downloadSelection.size || !!backupBusy}><Download size={16} />Download {downloadSelection.size} data pilihan</button>
+            </div>
+          );
+        })()}
         {backupProgress && <div className="backup-progress"><span className="spinner dark" />{backupProgress}</div>}
         {importPreview && <div className="backup-preview">
           <div className="backup-preview-title"><b>{importPreview.filename}</b><small>{importPreview.kind === "direct" ? `${importPreview.datasets[0]?.label || "Dokumen"} dikenali otomatis dari nama file, sheet, dan judul kolom.` : "Pilih sheet yang akan diproses."} Data yang cocok akan diperbarui dengan data baru dari file ini.</small>{importPreview.warnings?.duplicatesInFile > 0 && <small className="backup-warning">{importPreview.warnings.duplicatesInFile.toLocaleString("id-ID")} baris identik di dalam file dilewati otomatis agar laporan dan KPI tidak terhitung ganda.</small>}{importPreview.warnings?.unmatchedMachines > 0 && <small className="backup-warning">{importPreview.warnings.unmatchedMachines.toLocaleString("id-ID")} baris memakai nama mesin yang belum cocok dengan master; data tetap dapat disimpan tanpa relasi master.</small>}{importPreview.warnings?.unmatchedParts > 0 && <small className="backup-warning">{importPreview.warnings.unmatchedParts.toLocaleString("id-ID")} baris memakai part yang belum cocok dengan master; laporan tetap tersimpan tanpa relasi part.</small>}{importPreview.warnings?.timeAnomalies > 0 && <small className="backup-warning">{importPreview.warnings.timeAnomalies.toLocaleString("id-ID")} baris memiliki jam selesai sebelum jam mulai dan akan ditandai sebagai anomali sumber.</small>}{importPreview.warnings?.durationAnomalies > 0 && <small className="backup-warning">{importPreview.warnings.durationAnomalies.toLocaleString("id-ID")} baris memiliki Total Jam yang berbeda dari selisih waktu dan akan ditandai sebagai anomali sumber.</small>}</div>
