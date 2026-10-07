@@ -21,8 +21,10 @@ function maintenanceLabel(row){
 export function normalizeMaintenancePrintRows(rows=[]){
   return rows.map(row=>{
     const date=dateParts(row.tanggal_iso||row.tanggal);
+    const noteText=text(row.keterangan||row.notes||row.hasil_pemeriksaan);
     return {...row,id:text(row.id||row.rowIndex),kategori:text(row.kategori)||"Mesin",jenis:text(row.jenis),
       nama_mesin:text(row.nama_mesin||row.nama),perawatan:maintenanceLabel(row),date,
+      keterangan:noteText,notes:noteText,hasil_pemeriksaan:noteText,
       checks:(Array.isArray(row.checks)?row.checks:[]).map((check,index)=>({
         name:text(check.name)||`Item ${index+1}`,sortOrder:Number(check.sort_order??index+1),
         status:text(check.status),rawStatus:text(check.raw_status),

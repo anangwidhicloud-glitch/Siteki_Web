@@ -1847,6 +1847,12 @@ function MaintenancePrintSelector({ number, rows, kategori, value, onChange, oth
     const order = ["jenis", "nama_mesin", "perawatan", "year", "month", "recordId"], index = order.indexOf(key);
     const updated = { ...value, [key]: next };
     order.slice(index + 1).forEach(field => { updated[field] = ""; });
+    if (key === "recordId") {
+      const selectedRow = rows.find(row => row.id === next);
+      updated.note = selectedRow?.keterangan || selectedRow?.notes || selectedRow?.hasil_pemeriksaan || "";
+    } else if (key !== "note") {
+      updated.note = "";
+    }
     onChange(updated);
   };
   const dateLabel = row => `${String(row.date.day).padStart(2, "0")} ${MAINTENANCE_PRINT_MONTHS[row.date.month - 1]} ${row.date.year}`;
