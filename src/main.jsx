@@ -8,7 +8,7 @@ import {
   FilePlus2, Gauge, HardHat, History, Home, ImagePlus, Info, ExternalLink, LogOut, Menu, MoreHorizontal, Package, Printer,
   LockKeyhole, Maximize2, Minimize2, Monitor, Moon, Plus, QrCode, RefreshCw, Search, Settings,
   ScanLine, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TimerReset, Trash2, TrendingDown, Upload,
-  TrendingUp, UserRound, Users, Warehouse, Wrench, X, Zap
+  TrendingUp, UserRound, Users, Warehouse, Wrench, X, Zap, ArrowUpDown
 } from "lucide-react";
 import "./styles.css";
 import { apiGet, apiPost, asArray, ENDPOINTS, isSuccess } from "./lib/api";
@@ -3130,6 +3130,18 @@ function Schedule({ go, notify, session }) {
     }
   };
 
+  const [sortOrder, setSortOrder] = useState("asc");
+
+  const sortedMachines = useMemo(() => {
+    if (sortOrder === "asc") {
+      return [...SCHEDULE_MACHINES].sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true, sensitivity: "base" }));
+    }
+    if (sortOrder === "desc") {
+      return [...SCHEDULE_MACHINES].sort((a, b) => b.localeCompare(a, "id-ID", { numeric: true, sensitivity: "base" }));
+    }
+    return SCHEDULE_MACHINES;
+  }, [sortOrder]);
+
   const machineQuotas = useMemo(() => {
     const map = new Map();
     for (const name of SCHEDULE_MACHINES) {
@@ -3318,6 +3330,15 @@ function Schedule({ go, notify, session }) {
         </div>
       </div>
       <div className="schedule-bar-right-actions">
+        <button
+          type="button"
+          className={`schedule-sort-btn ${sortOrder !== "default" ? "active" : ""}`}
+          onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? "default" : "asc")}
+          title="Ubah urutan daftar mesin (A-Z / Z-A / Master)"
+        >
+          <ArrowUpDown size={13} />
+          <span>{sortOrder === "asc" ? "A ke Z" : sortOrder === "desc" ? "Z ke A" : "Master"}</span>
+        </button>
         {isAdmin && (
           <>
             <button
@@ -3383,6 +3404,15 @@ function Schedule({ go, notify, session }) {
             </label>
           </div>
           <div className="schedule-legend in-bar">
+            <button
+              type="button"
+              className={`schedule-sort-btn ${sortOrder !== "default" ? "active" : ""}`}
+              onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? "default" : "asc")}
+              title="Ubah urutan daftar mesin (A-Z / Z-A / Master)"
+            >
+              <ArrowUpDown size={13} />
+              <span>{sortOrder === "asc" ? "A ke Z" : sortOrder === "desc" ? "Z ke A" : "Master"}</span>
+            </button>
             <div className="fullscreen-achievement-tag">
               <TrendingUp size={13} />
               <span>Pencapaian: <b>{monthlyStats.percentage}%</b> ({monthlyStats.actualCount}/{monthlyStats.plannedCount})</span>
@@ -3406,12 +3436,27 @@ function Schedule({ go, notify, session }) {
       {!remote.loading && !remote.error && <div className="maintenance-matrix-scroll" ref={matrixScrollRef}>
         <table className="maintenance-matrix">
           <thead>
-            <tr><th className="machine-column" rowSpan="2">Mesin / Tanggal</th>{monthDaysMeta.map(({ day, weekday, isHoliday, isSaturday, isToday }) => {
-              return <th className={`date-column ${isHoliday ? "holiday" : isSaturday ? "saturday" : ""} ${isToday ? "today" : ""}`} colSpan="2" key={day}><small>{["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"][weekday]}</small><b>{day}</b></th>;
-            })}</tr>
+            <tr>
+              <th
+                className="machine-column sortable-header"
+                rowSpan="2"
+                onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? "default" : "asc")}
+                title={`Urutkan nama mesin (Saat ini: ${sortOrder === "asc" ? "A ke Z" : sortOrder === "desc" ? "Z ke A" : "Sesuai Master"}). Klik untuk beralih.`}
+              >
+                <div className="machine-column-header-content">
+                  <span>Mesin / Tanggal</span>
+                  <span className="sort-indicator-badge">
+                    {sortOrder === "asc" ? "A-Z ↓" : sortOrder === "desc" ? "Z-A ↑" : "Master"}
+                  </span>
+                </div>
+              </th>
+              {monthDaysMeta.map(({ day, weekday, isHoliday, isSaturday, isToday }) => {
+                return <th className={`date-column ${isHoliday ? "holiday" : isSaturday ? "saturday" : ""} ${isToday ? "today" : ""}`} colSpan="2" key={day}><small>{["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"][weekday]}</small><b>{day}</b></th>;
+              })}
+            </tr>
             <tr>{monthDaysMeta.map(({ day }) => <React.Fragment key={day}><th className="channel plan">P</th><th className="channel actual">A</th></React.Fragment>)}</tr>
           </thead>
-          <tbody>{SCHEDULE_MACHINES.map(name => (
+          <tbody>{sortedMachines.map(name => (
             <MaintenanceRow
               key={name}
               name={name}
