@@ -7,6 +7,7 @@ import { queueSystemNotification,sendSystemNotification } from "../lib/push.js";
 
 function maintenanceObject(row) {
   const legacy = row.legacy_data && typeof row.legacy_data === "object" ? row.legacy_data : {};
+  const noteContent = row.notes || legacy.keterangan || legacy.hasil_pemeriksaan || "";
   return {
     id:row.id, rowIndex:rowKey(row), tanggal:idDate(row.inspected_on),
     kategori:row.machine_category||"", jenis:row.machine_type||"",
@@ -14,7 +15,7 @@ function maintenanceObject(row) {
     waktu:row.schedule_code||(/bulanan/i.test(row.maintenance_type||"")?"B":"M"),
     jenis_perawatan:row.schedule_code||row.maintenance_type||"",
     kondisi_mesin:legacy.kondisi_mesin||legacy.kondisi||"",
-    hasil_pemeriksaan:legacy.hasil_pemeriksaan||"", keterangan:row.notes||"",
+    hasil_pemeriksaan:noteContent, keterangan:noteContent,
   };
 }
 
@@ -182,7 +183,7 @@ async function saveMaintenance(request,env,body) {
   if(!inspectedOn) throw new HttpError(400,"Tanggal perawatan tidak valid.");
   const category=text(body.kategori)||"Mesin", type=text(body.jenis), name=required(body.nama_mesin,"Nama mesin");
   const code=text(body.waktu)||"M", maintenanceType=code.toUpperCase()==="B"?"Bulanan":"Mingguan";
-  const notes=[text(body.hasil_pemeriksaan),text(body.keterangan)].filter(Boolean).join(" — ")||null;
+  const notes=[text(body.keterangan),text(body.hasil_pemeriksaan)].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(" — ")||null;
   const sql=database(env);
 
   // Pengaman kuota perawatan bulanan: 3x Mingguan dan 1x Bulanan
@@ -200,15 +201,17 @@ async function saveMaintenance(request,env,body) {
     throw new HttpError(400, `Mesin ${name} sudah mencapai batas maksimal perawatan untuk bulan ini (3x Mingguan dan 1x Bulanan). Perawatan tidak dapat ditambah lagi.`);
   }
 
-  const machine=await sql`SELECT id FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
+  const machine=await sql`SELECT id, category, machine_type FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
+  const resolvedCategory = category && category !== "Mesin" ? category : (machine[0]?.category || category || "Mesin");
+  const resolvedType = type || machine[0]?.machine_type || "";
   const plan=await sql`SELECT id FROM maintenance_plans WHERE planned_on=${inspectedOn}::date AND lower(machine_name)=lower(${name}) ORDER BY (lower(coalesce(schedule_code,''))=lower(${code})) DESC LIMIT 1`;
   const rows=await sql`
     INSERT INTO maintenance_inspections (plan_id,machine_id,inspected_on,machine_category,machine_type,machine_name,schedule_code,maintenance_type,notes,source_sheet,legacy_sheet_row,legacy_data)
-    VALUES (${plan[0]?.id||null},${machine[0]?.id||null},${inspectedOn},${category},${type},${name},${code},${maintenanceType},${notes},'Neon API',NULL,${JSON.stringify(body)}::jsonb)
+    VALUES (${plan[0]?.id||null},${machine[0]?.id||null},${inspectedOn},${resolvedCategory},${resolvedType},${name},${code},${maintenanceType},${notes},'Neon API',NULL,${JSON.stringify(body)}::jsonb)
     RETURNING id
   `;
   const condition=text(body.kondisi_mesin||body.kondisi);
-  await syncInspectionCheckResults(sql, rows[0].id, category, body.checks, condition);
+  await syncInspectionCheckResults(sql, rows[0].id, resolvedCategory, body.checks, condition);
   return {status:"success",message:"Data perawatan berhasil disimpan.",data:{id:rows[0].id}};
 }
 
@@ -219,17 +222,19 @@ async function updateMaintenance(request,env,body) {
   if(!inspectedOn) throw new HttpError(400,"Tanggal perawatan tidak valid.");
   const category=text(body.kategori)||"Mesin", type=text(body.jenis), name=required(body.nama_mesin,"Nama mesin");
   const code=text(body.waktu)||"M", maintenanceType=code.toUpperCase()==="B"?"Bulanan":"Mingguan";
-  const notes=[text(body.hasil_pemeriksaan),text(body.keterangan)].filter(Boolean).join(" — ")||null;
+  const notes=[text(body.keterangan),text(body.hasil_pemeriksaan)].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(" — ")||null;
   const sql=database(env);
-  const machine=await sql`SELECT id FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
+  const machine=await sql`SELECT id, category, machine_type FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
+  const resolvedCategory = category && category !== "Mesin" ? category : (machine[0]?.category || category || "Mesin");
+  const resolvedType = type || machine[0]?.machine_type || "";
   const plan=await sql`SELECT id FROM maintenance_plans WHERE planned_on=${inspectedOn}::date AND lower(machine_name)=lower(${name}) ORDER BY (lower(coalesce(schedule_code,''))=lower(${code})) DESC LIMIT 1`;
   const rows=await sql`
     UPDATE maintenance_inspections
     SET plan_id=${plan[0]?.id||null},
         machine_id=${machine[0]?.id||null},
         inspected_on=${inspectedOn},
-        machine_category=${category},
-        machine_type=${type},
+        machine_category=${resolvedCategory},
+        machine_type=${resolvedType},
         machine_name=${name},
         schedule_code=${code},
         maintenance_type=${maintenanceType},
@@ -244,7 +249,7 @@ async function updateMaintenance(request,env,body) {
   if (Array.isArray(body.checks) && body.checks.length > 0) {
     await sql`DELETE FROM maintenance_check_results WHERE inspection_id=${id}`;
   }
-  await syncInspectionCheckResults(sql, id, category, body.checks, condition);
+  await syncInspectionCheckResults(sql, id, resolvedCategory, body.checks, condition);
   return {status:"success",message:"Data perawatan berhasil diperbarui.",data:{id}};
 }
 

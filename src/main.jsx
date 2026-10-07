@@ -2346,7 +2346,13 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
       const repairItems = checks.filter(c => c.status === "Perbaikan");
       const hasilPemeriksaanSummary = repairItems.length > 0
         ? `Perbaikan: ${repairItems.map(c => `${c.name}${c.notes ? ` (${c.notes})` : ""}`).join("; ")}`
-        : `Seluruh ${checks.length} item checklist normal/bagus.`;
+        : "";
+
+      const finalKeterangan = form.keterangan
+        ? (hasilPemeriksaanSummary && !form.keterangan.includes(hasilPemeriksaanSummary)
+            ? `${hasilPemeriksaanSummary} — ${form.keterangan}`
+            : form.keterangan)
+        : hasilPemeriksaanSummary;
 
       if (item.isNew) {
         const payload = {
@@ -2357,8 +2363,8 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
           waktu: form.waktu === "Bulanan" ? "B" : "M",
           kondisi: form.kondisi_mesin,
           kondisi_mesin: form.kondisi_mesin,
-          hasil_pemeriksaan: form.hasil_pemeriksaan || hasilPemeriksaanSummary,
-          keterangan: form.keterangan || "",
+          hasil_pemeriksaan: finalKeterangan,
+          keterangan: finalKeterangan,
           checks: checks.map(c => ({
             name: c.name,
             sort_order: c.sort_order,
@@ -2381,8 +2387,8 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
           waktu: form.waktu === "Bulanan" ? "B" : "M",
           kondisi: form.kondisi_mesin,
           kondisi_mesin: form.kondisi_mesin,
-          hasil_pemeriksaan: form.hasil_pemeriksaan || hasilPemeriksaanSummary,
-          keterangan: form.keterangan || "",
+          hasil_pemeriksaan: finalKeterangan,
+          keterangan: finalKeterangan,
           checks: checks.map(c => ({
             name: c.name,
             sort_order: c.sort_order,
@@ -2463,15 +2469,9 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
                 <Badge text={item.kondisi_mesin || "Baik"} />
               </div>
               <div className="detail-item wide">
-                <span>Hasil Pemeriksaan</span>
-                <p>{item.hasil_pemeriksaan || "Tidak ada catatan aktivitas."}</p>
+                <span>Keterangan</span>
+                <p>{item.keterangan || item.hasil_pemeriksaan || "Tidak ada catatan."}</p>
               </div>
-              {item.keterangan && (
-                <div className="detail-item wide">
-                  <span>Catatan Tambahan</span>
-                  <p>{item.keterangan}</p>
-                </div>
-              )}
             </div>
 
             {/* Checklist View in Modal */}
@@ -3023,6 +3023,7 @@ function Schedule({ go, notify, session }) {
   }, [month, year]);
 
   const remote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.maintenance, { action: "getPerawatan" }, { timeout: 90000 })));
+  const machineMaster = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.maintenanceMaster, { action: "getRawatMaster" })));
 
   const actualIndex = useMemo(() => {
     const map = new Map();
@@ -3126,17 +3127,20 @@ function Schedule({ go, notify, session }) {
       return;
     }
     const formattedDate = `${String(day).padStart(2, "0")}/${String(month + 1).padStart(2, "0")}/${year}`;
+    const mInfo = (machineMaster.data || []).find(x => String(x.Nama || x.nama || "").toLowerCase().trim() === String(name || "").toLowerCase().trim());
     setSelectedRecord({
       isNew: true,
       nama_mesin: name,
       nama: name,
+      kategori: mInfo?.kategori || mInfo?.Kategori || "Mesin",
+      jenis: mInfo?.jenis || mInfo?.Jenis || "",
       tanggal: formattedDate,
       waktu: status === "B" ? "B" : "M",
       kondisi_mesin: "Baik",
       hasil_pemeriksaan: "",
       keterangan: ""
     });
-  }, [month, year, remote.data, notify]);
+  }, [month, year, remote.data, machineMaster.data, notify]);
 
   const handleSelectActual = useCallback((actualItem, name, day, status, actual) => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
@@ -3657,7 +3661,13 @@ function MaintenanceForm({ notify, selectedOrder, go }) {
       const repairItems = checks.filter(c => c.status === "Perbaikan");
       const hasilPemeriksaanSummary = repairItems.length > 0
         ? `Perbaikan: ${repairItems.map(c => `${c.name}${c.notes ? ` (${c.notes})` : ""}`).join("; ")}`
-        : `Seluruh ${checks.length} item checklist normal/bagus.`;
+        : "";
+
+      const finalKeterangan = keterangan
+        ? (hasilPemeriksaanSummary && !keterangan.includes(hasilPemeriksaanSummary)
+            ? `${hasilPemeriksaanSummary} — ${keterangan}`
+            : keterangan)
+        : hasilPemeriksaanSummary;
 
       const payload = {
         kategori: selectedKategori || "Mesin",
@@ -3667,8 +3677,8 @@ function MaintenanceForm({ notify, selectedOrder, go }) {
         waktu: waktu === "Bulanan" ? "B" : "M",
         kondisi: kondisiMesin,
         kondisi_mesin: kondisiMesin,
-        hasil_pemeriksaan: hasilPemeriksaanSummary,
-        keterangan: keterangan || "",
+        hasil_pemeriksaan: finalKeterangan,
+        keterangan: finalKeterangan,
         checks: checks.map(c => ({
           name: c.name,
           sort_order: c.sort_order,

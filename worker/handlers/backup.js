@@ -451,7 +451,8 @@ export async function exportDirectDataset(sql,documentType,monthFilter){
         FROM maintenance_check_items
         ORDER BY CASE WHEN lower(machine_category)='mesin' THEN 0 ELSE 1 END,sort_order,name`),
       sql.query(`SELECT to_char(inspection.inspected_on,'YYYY-MM-DD') AS inspected_on,
-          inspection.machine_category,inspection.machine_type,
+          coalesce(nullif(inspection.machine_category, ''), machine.category, 'Mesin') AS machine_category,
+          coalesce(nullif(inspection.machine_type, ''), machine.machine_type, '') AS machine_type,
           inspection.machine_name,inspection.schedule_code,inspection.notes,
           coalesce(jsonb_object_agg(
             lower(btrim(item.machine_category))||'|'||lower(btrim(item.name)),
@@ -462,11 +463,15 @@ export async function exportDirectDataset(sql,documentType,monthFilter){
               ELSE result.status END)
           ) FILTER (WHERE item.id IS NOT NULL),'{}'::jsonb) AS checks
         FROM maintenance_inspections inspection
+        LEFT JOIN machines machine ON lower(btrim(machine.name)) = lower(btrim(inspection.machine_name))
         LEFT JOIN maintenance_check_results result ON result.inspection_id=inspection.id
         LEFT JOIN maintenance_check_items item ON item.id=result.item_id
         ${whereClause}
-        GROUP BY inspection.id
-        ORDER BY inspection.inspected_on,inspection.machine_category,inspection.machine_type,inspection.machine_name`, params),
+        GROUP BY inspection.id, machine.category, machine.machine_type
+        ORDER BY inspection.inspected_on,
+          coalesce(nullif(inspection.machine_category, ''), machine.category, 'Mesin'),
+          coalesce(nullif(inspection.machine_type, ''), machine.machine_type, ''),
+          inspection.machine_name`, params),
     ]);
     return {documentType,filename:"Rekap Perawatan.xlsx",sheet:"det_rawat",items,rows};
   }
