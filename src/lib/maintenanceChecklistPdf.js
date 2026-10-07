@@ -18,10 +18,16 @@ function maintenanceLabel(row){
   return text(row.perawatan||row.jenis_perawatan||row.waktu)||"-";
 }
 
+function cleanNotes(notes) {
+  if (!notes) return "";
+  const parts = String(notes).split(/\s*—\s*/).map(p => p.trim()).filter(Boolean);
+  return parts.filter((p, i) => parts.indexOf(p) === i).join(" — ");
+}
+
 export function normalizeMaintenancePrintRows(rows=[]){
   return rows.map(row=>{
     const date=dateParts(row.tanggal_iso||row.tanggal);
-    const noteText=text(row.keterangan||row.notes||row.hasil_pemeriksaan);
+    const noteText=cleanNotes(text(row.keterangan||row.notes||row.hasil_pemeriksaan));
     return {...row,id:text(row.id||row.rowIndex),kategori:text(row.kategori)||"Mesin",jenis:text(row.jenis),
       nama_mesin:text(row.nama_mesin||row.nama),perawatan:maintenanceLabel(row),date,
       keterangan:noteText,notes:noteText,hasil_pemeriksaan:noteText,

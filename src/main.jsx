@@ -2488,7 +2488,7 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
               </div>
               <div className="detail-item wide">
                 <span>Keterangan</span>
-                <p>{item.keterangan || item.hasil_pemeriksaan || "Tidak ada catatan."}</p>
+                <p>{cleanAndCombineNotes("", item.keterangan || item.hasil_pemeriksaan) || "Tidak ada catatan."}</p>
               </div>
             </div>
 
@@ -2850,7 +2850,7 @@ function MaintenancePopover({ item, anchorEl, onClose, onOpenDetail, onMouseEnte
             ) : item.hasil_pemeriksaan && /perbaikan/i.test(item.hasil_pemeriksaan) ? (
               <div className="popover-repair-summary">
                 <AlertTriangle size={13} className="repair-icon" />
-                <span>{item.hasil_pemeriksaan}</span>
+                <span>{cleanAndCombineNotes("", item.hasil_pemeriksaan)}</span>
               </div>
             ) : (
               <div className="popover-all-good">
@@ -2861,7 +2861,7 @@ function MaintenancePopover({ item, anchorEl, onClose, onOpenDetail, onMouseEnte
 
             {item.keterangan && (
               <div className="popover-notes">
-                <small>Catatan: {item.keterangan}</small>
+                <small>Catatan: {cleanAndCombineNotes("", item.keterangan)}</small>
               </div>
             )}
           </div>
