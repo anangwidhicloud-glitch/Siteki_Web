@@ -5,9 +5,15 @@ import {
 import { calculateElectricityAssessment, summarizeMonthlyReactiveEnergy } from "../../src/lib/electricity.js";
 import { queueSystemNotification,sendSystemNotification } from "../lib/push.js";
 
+function cleanNotes(notes) {
+  if (!notes) return "";
+  const parts = String(notes).split(/\s*—\s*/).map(p => p.trim()).filter(Boolean);
+  return parts.filter((p, i) => parts.indexOf(p) === i).join(" — ");
+}
+
 function maintenanceObject(row) {
   const legacy = row.legacy_data && typeof row.legacy_data === "object" ? row.legacy_data : {};
-  const noteContent = row.notes || legacy.keterangan || legacy.hasil_pemeriksaan || "";
+  const noteContent = cleanNotes(row.notes || legacy.keterangan || legacy.hasil_pemeriksaan || "");
   return {
     id:row.id, rowIndex:rowKey(row), tanggal:idDate(row.inspected_on),
     kategori:row.machine_category||"", jenis:row.machine_type||"",
@@ -183,7 +189,8 @@ async function saveMaintenance(request,env,body) {
   if(!inspectedOn) throw new HttpError(400,"Tanggal perawatan tidak valid.");
   const category=text(body.kategori)||"Mesin", type=text(body.jenis), name=required(body.nama_mesin,"Nama mesin");
   const code=text(body.waktu)||"M", maintenanceType=code.toUpperCase()==="B"?"Bulanan":"Mingguan";
-  const notes=[text(body.keterangan),text(body.hasil_pemeriksaan)].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(" — ")||null;
+  const rawNotes=[text(body.keterangan),text(body.hasil_pemeriksaan)].filter(Boolean).join(" — ");
+  const notes=cleanNotes(rawNotes)||null;
   const sql=database(env);
 
   // Pengaman kuota perawatan bulanan: 3x Mingguan dan 1x Bulanan
@@ -222,7 +229,8 @@ async function updateMaintenance(request,env,body) {
   if(!inspectedOn) throw new HttpError(400,"Tanggal perawatan tidak valid.");
   const category=text(body.kategori)||"Mesin", type=text(body.jenis), name=required(body.nama_mesin,"Nama mesin");
   const code=text(body.waktu)||"M", maintenanceType=code.toUpperCase()==="B"?"Bulanan":"Mingguan";
-  const notes=[text(body.keterangan),text(body.hasil_pemeriksaan)].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(" — ")||null;
+  const rawNotes=[text(body.keterangan),text(body.hasil_pemeriksaan)].filter(Boolean).join(" — ");
+  const notes=cleanNotes(rawNotes)||null;
   const sql=database(env);
   const machine=await sql`SELECT id, category, machine_type FROM machines WHERE lower(name)=lower(${name}) ORDER BY (lower(coalesce(machine_type,''))=lower(${type||""})) DESC LIMIT 1`;
   const resolvedCategory = category && category !== "Mesin" ? category : (machine[0]?.category || category || "Mesin");

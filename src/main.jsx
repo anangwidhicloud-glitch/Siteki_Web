@@ -2178,6 +2178,21 @@ function buildMaintenanceAgenda(actualRows, today) {
   };
 }
 
+function extractManualNote(keterangan) {
+  if (!keterangan) return "";
+  const parts = String(keterangan).split(/\s*—\s*/).map(p => p.trim()).filter(Boolean);
+  const manualParts = parts.filter(p => !/^perbaikan\s*:/i.test(p) && !/^seluruh\s+\d+\s+item/i.test(p));
+  return manualParts.filter((p, i) => manualParts.indexOf(p) === i).join(" — ");
+}
+
+function cleanAndCombineNotes(summary, manualNote) {
+  const parts = [summary, manualNote]
+    .map(s => String(s || "").trim())
+    .filter(Boolean)
+    .flatMap(s => s.split(/\s*—\s*/).map(p => p.trim()).filter(Boolean));
+  return parts.filter((p, i) => parts.indexOf(p) === i).join(" — ");
+}
+
 function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, notify, container }) {
   const isAdmin = String(session?.role || "").toLocaleLowerCase("id-ID") === "admin";
   const [editing, setEditing] = useState(Boolean(item.isNew));
@@ -2194,7 +2209,7 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
     waktu: isMonthly ? "Bulanan" : "Mingguan",
     kondisi_mesin: item.kondisi_mesin || "Baik",
     hasil_pemeriksaan: item.hasil_pemeriksaan || "",
-    keterangan: item.keterangan || ""
+    keterangan: extractManualNote(item.keterangan || "")
   });
 
   const [checks, setChecks] = useState([]);
@@ -2354,11 +2369,8 @@ function MaintenanceRecordModal({ item, session, onClose, onUpdated, onDeleted, 
         ? `Perbaikan: ${repairItems.map(c => `${c.name}${c.notes ? ` (${c.notes})` : ""}`).join("; ")}`
         : "";
 
-      const finalKeterangan = form.keterangan
-        ? (hasilPemeriksaanSummary && !form.keterangan.includes(hasilPemeriksaanSummary)
-            ? `${hasilPemeriksaanSummary} — ${form.keterangan}`
-            : form.keterangan)
-        : hasilPemeriksaanSummary;
+      const userManualNote = extractManualNote(form.keterangan);
+      const finalKeterangan = cleanAndCombineNotes(hasilPemeriksaanSummary, userManualNote);
 
       if (item.isNew) {
         const payload = {
@@ -3669,11 +3681,8 @@ function MaintenanceForm({ notify, selectedOrder, go }) {
         ? `Perbaikan: ${repairItems.map(c => `${c.name}${c.notes ? ` (${c.notes})` : ""}`).join("; ")}`
         : "";
 
-      const finalKeterangan = keterangan
-        ? (hasilPemeriksaanSummary && !keterangan.includes(hasilPemeriksaanSummary)
-            ? `${hasilPemeriksaanSummary} — ${keterangan}`
-            : keterangan)
-        : hasilPemeriksaanSummary;
+      const userManualNote = extractManualNote(keterangan);
+      const finalKeterangan = cleanAndCombineNotes(hasilPemeriksaanSummary, userManualNote);
 
       const payload = {
         kategori: selectedKategori || "Mesin",
