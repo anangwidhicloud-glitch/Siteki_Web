@@ -3160,9 +3160,15 @@ function Schedule({ go, notify, session }) {
         { action: "direct-export", documentType: "maintenance", month: monthKey },
         { cache: false, timeout: 120000 }
       );
-      const file = await createDirectBackupWorkbook("maintenance", payload);
+      const filteredRows = Array.isArray(payload?.rows)
+        ? payload.rows.filter(row => {
+            const rowDate = String(row.inspected_on || "").trim();
+            return rowDate.startsWith(monthKey);
+          })
+        : [];
+      const file = await createDirectBackupWorkbook("maintenance", { ...payload, rows: filteredRows });
       downloadWorkbook(file.buffer, "Rekap Perawatan.xlsx");
-      notify(`Data Inspeksi Perawatan ${monthLabel} (${payload.rows?.length || 0} baris) berhasil diunduh.`);
+      notify(`Data Inspeksi Perawatan ${monthLabel} (${filteredRows.length} baris) berhasil diunduh.`);
     } catch (error) {
       notify(error?.message || "Gagal mengunduh data inspeksi.");
     } finally {
