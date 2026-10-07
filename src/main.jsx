@@ -8,7 +8,7 @@ import {
   FilePlus2, Gauge, HardHat, History, Home, ImagePlus, Info, ExternalLink, LogOut, Menu, MoreHorizontal, Package, Printer,
   LockKeyhole, Maximize2, Minimize2, Monitor, Moon, Plus, QrCode, RefreshCw, Search, Settings,
   ScanLine, ShieldCheck, SlidersHorizontal, Sparkles, Sun, TimerReset, Trash2, TrendingDown, Upload,
-  TrendingUp, UserRound, Users, Warehouse, Wrench, X, Zap, ArrowUpDown
+  TrendingUp, UserRound, Users, Warehouse, Wrench, X, Zap, ArrowUpDown, ArrowDown, ArrowUp
 } from "lucide-react";
 import "./styles.css";
 import { apiGet, apiPost, asArray, ENDPOINTS, isSuccess } from "./lib/api";
@@ -3330,15 +3330,6 @@ function Schedule({ go, notify, session }) {
         </div>
       </div>
       <div className="schedule-bar-right-actions">
-        <button
-          type="button"
-          className={`schedule-sort-btn ${sortOrder !== "default" ? "active" : ""}`}
-          onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? "default" : "asc")}
-          title="Ubah urutan daftar mesin (A-Z / Z-A / Master)"
-        >
-          <ArrowUpDown size={13} />
-          <span>{sortOrder === "asc" ? "A ke Z" : sortOrder === "desc" ? "Z ke A" : "Master"}</span>
-        </button>
         {isAdmin && (
           <>
             <button
@@ -3404,15 +3395,6 @@ function Schedule({ go, notify, session }) {
             </label>
           </div>
           <div className="schedule-legend in-bar">
-            <button
-              type="button"
-              className={`schedule-sort-btn ${sortOrder !== "default" ? "active" : ""}`}
-              onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? "default" : "asc")}
-              title="Ubah urutan daftar mesin (A-Z / Z-A / Master)"
-            >
-              <ArrowUpDown size={13} />
-              <span>{sortOrder === "asc" ? "A ke Z" : sortOrder === "desc" ? "Z ke A" : "Master"}</span>
-            </button>
             <div className="fullscreen-achievement-tag">
               <TrendingUp size={13} />
               <span>Pencapaian: <b>{monthlyStats.percentage}%</b> ({monthlyStats.actualCount}/{monthlyStats.plannedCount})</span>
@@ -3441,12 +3423,12 @@ function Schedule({ go, notify, session }) {
                 className="machine-column sortable-header"
                 rowSpan="2"
                 onClick={() => setSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? "default" : "asc")}
-                title={`Urutkan nama mesin (Saat ini: ${sortOrder === "asc" ? "A ke Z" : sortOrder === "desc" ? "Z ke A" : "Sesuai Master"}). Klik untuk beralih.`}
+                title={`Urutkan nama mesin (${sortOrder === "asc" ? "A ke Z (klik untuk Z ke A)" : sortOrder === "desc" ? "Z ke A (klik untuk Master)" : "Master (klik untuk A ke Z)"})`}
               >
                 <div className="machine-column-header-content">
                   <span>Mesin / Tanggal</span>
                   <span className="sort-indicator-badge">
-                    {sortOrder === "asc" ? "A-Z ↓" : sortOrder === "desc" ? "Z-A ↑" : "Master"}
+                    {sortOrder === "asc" ? <ArrowDown size={11} /> : sortOrder === "desc" ? <ArrowUp size={11} /> : <SlidersHorizontal size={11} />}
                   </span>
                 </div>
               </th>
