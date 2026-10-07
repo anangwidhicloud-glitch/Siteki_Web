@@ -3245,37 +3245,6 @@ function Schedule({ go, notify, session }) {
     <div className="schedule-search">
       <div className="schedule-search-top">
         <span className="eyebrow">Pencarian data metric</span>
-        {isAdmin && (
-          <div className="schedule-io-actions">
-            <button
-              type="button"
-              className="schedule-io-btn download"
-              onClick={downloadMonthlyInspection}
-              disabled={!!ioBusy}
-              title={`Download data inspeksi perawatan ${SCHEDULE_MONTHS[month]} ${year} (Excel)`}
-            >
-              <Download size={14} />
-              <span>{ioBusy === "download" ? "Mengunduh..." : `Download ${SCHEDULE_MONTHS[month]} ${year}`}</span>
-            </button>
-            <button
-              type="button"
-              className="schedule-io-btn upload"
-              onClick={() => uploadInputRef.current?.click()}
-              disabled={!!ioBusy}
-              title={`Upload revisi Excel inspeksi perawatan ${SCHEDULE_MONTHS[month]} ${year}`}
-            >
-              <Upload size={14} />
-              <span>Upload Revisi Excel</span>
-            </button>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              style={{ display: "none" }}
-              onChange={onChooseExcelFile}
-            />
-          </div>
-        )}
       </div>
       <div>
         <label><span>Bulan</span><select value={month} onChange={e => setMonth(Number(e.target.value))}>{SCHEDULE_MONTHS.map((name, i) => <option value={i} key={name}>{name}</option>)}</select></label>
@@ -3349,6 +3318,13 @@ function Schedule({ go, notify, session }) {
               <Upload size={14} />
               <span>Upload Revisi</span>
             </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              style={{ display: "none" }}
+              onChange={onChooseExcelFile}
+            />
           </>
         )}
         <button

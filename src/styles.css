@@ -2625,58 +2625,7 @@ td b,td small { display:block; }td b { color:var(--ink);font-size:11px; }td smal
 .schedule-search-top .eyebrow {
   margin-bottom: 0;
 }
-.schedule-io-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.schedule-io-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 13px;
-  border-radius: 9px;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid var(--line);
-  line-height: 1;
-}
-.schedule-io-btn.download {
-  background: var(--surface);
-  color: var(--ink);
-}
-.schedule-io-btn.download:hover:not(:disabled) {
-  background: var(--surface-2);
-  border-color: var(--mint-dark);
-  color: var(--mint-dark);
-}
-.schedule-io-btn.upload {
-  background: var(--mint-dark);
-  color: #0b1a13;
-  border-color: var(--mint-dark);
-}
-.schedule-io-btn.upload:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.schedule-io-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
-:root[data-theme="dark"] .schedule-io-btn.download {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.15);
-  color: #f1f5f9;
-}
-:root[data-theme="dark"] .schedule-io-btn.download:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(52, 211, 153, 0.5);
-  color: #34d399;
-}
 
 .schedule-bar-right-actions {
   display: flex;
