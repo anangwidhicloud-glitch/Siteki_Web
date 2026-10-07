@@ -459,7 +459,7 @@ export async function exportDirectDataset(sql,documentType,monthFilter){
             coalesce(result.raw_status,CASE result.status
               WHEN 'good' THEN 'Bagus'
               WHEN 'repair_needed' THEN 'Perbaikan'
-              WHEN 'not_applicable' THEN 'X'
+              WHEN 'not_applicable' THEN 'T.A'
               ELSE result.status END)
           ) FILTER (WHERE item.id IS NOT NULL),'{}'::jsonb) AS checks
         FROM maintenance_inspections inspection

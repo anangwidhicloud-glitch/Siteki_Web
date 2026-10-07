@@ -87,7 +87,9 @@ export async function createDirectBackupWorkbook(documentType,payload){
         const itemCategory=String(item.machine_category||"").toLocaleLowerCase("id-ID");
         if(!item.shared&&itemCategory!==normalizedCategory)return null;
         const key=`${normalizedCategory}|${String(item.name).toLocaleLowerCase("id-ID")}`;
-        return row.checks?.[key]??null;
+        const val=row.checks?.[key]??null;
+        if(val&&String(val).trim().toLowerCase()==="x")return null;
+        return val;
       });
       sheet.addRow([dateCell(row.inspected_on),category,row.machine_type||null,row.machine_name||null,
         row.schedule_code||null,...values,row.notes||null]);
