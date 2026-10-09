@@ -5237,9 +5237,9 @@ function ReportAdminEditor({ report, onClose, onSave, session, notify }) {
             setSelectedPart(value === "Tidak Pakai" ? "Tidak Pakai" : "");
             setPartSize("");
             setPartSearch("");
-          }} disabled={partsRemote.loading} required>
-            <option>Tidak Pakai</option>
-            {partCategories.map(value => <option key={value}>{value}</option>)}
+          }} disabled={partsRemote.loading}>
+            <option value="Tidak Pakai">Tidak Pakai</option>
+            {partCategories.map(value => <option key={value} value={value}>{value}</option>)}
           </select>
           <input name="partKategori" type="hidden" value={selectedPartCategory === "Tidak Pakai" ? "" : selectedPartCategory} />
           {partsRemote.error && <small className="field-help error">Master part gagal dimuat: {partsRemote.error}</small>}
@@ -5255,11 +5255,11 @@ function ReportAdminEditor({ report, onClose, onSave, session, notify }) {
               item.category === selectedPartCategory && item.name === value
             );
             if (matched?.componentType) setWorkComponent(matched.componentType);
-          }} disabled={partsRemote.loading} required>
-            <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}</option>
-            {selectedPartCategory === "Tidak Pakai" && <option value="Tidak Pakai">Tidak Pakai</option>}
-            {partNames.map(value => <option key={value}>{value}</option>)}
+          }} disabled={partsRemote.loading || selectedPartCategory === "Tidak Pakai"} required={selectedPartCategory !== "Tidak Pakai"}>
+            <option value={selectedPartCategory === "Tidak Pakai" ? "Tidak Pakai" : ""}>{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}</option>
+            {selectedPartCategory !== "Tidak Pakai" && partNames.map(value => <option key={value} value={value}>{value}</option>)}
           </select>
+          {selectedPartCategory === "Tidak Pakai" && <input type="hidden" name="sparepart" value="Tidak Pakai" />}
         </Field>
         <Field label="Kode / jenis / ukuran part">
           <select name="ukuranPart" value={partSize} onChange={event => {
@@ -5269,10 +5269,11 @@ function ReportAdminEditor({ report, onClose, onSave, session, notify }) {
               item.category === selectedPartCategory && item.name === selectedPart && item.size === value
             );
             if (matched?.componentType) setWorkComponent(matched.componentType);
-          }} disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart} required={selectedPartCategory !== "Tidak Pakai" && partSizes.length > 0}>
-            <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : !selectedPart ? "Pilih spare part terlebih dahulu" : partSizes.length ? "Pilih ukuran part" : "Tidak ada ukuran pada master"}</option>
-            {partSizes.map(value => <option key={value}>{value}</option>)}
+          }} disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart || selectedPart === "Tidak Pakai"} required={selectedPartCategory !== "Tidak Pakai" && selectedPart !== "Tidak Pakai" && partSizes.length > 0}>
+            <option value="">{selectedPartCategory === "Tidak Pakai" || selectedPart === "Tidak Pakai" ? "Tidak menggunakan part" : !selectedPart ? "Pilih spare part terlebih dahulu" : partSizes.length ? "Pilih ukuran part" : "Tidak ada ukuran pada master"}</option>
+            {selectedPartCategory !== "Tidak Pakai" && selectedPart !== "Tidak Pakai" && partSizes.map(value => <option key={value} value={value}>{value}</option>)}
           </select>
+          {(selectedPartCategory === "Tidak Pakai" || selectedPart === "Tidak Pakai") && <input type="hidden" name="ukuranPart" value="" />}
         </Field>
         <ChoiceField label="Nilai perbaikan">
           <ChoiceCards name="nilaiPerbaikan" value={nilaiPerbaikan} onChange={setNilaiPerbaikan} required columns={3}
@@ -5993,13 +5994,15 @@ function JobForm({ notify, go, session }) {
                 );
                 if (matched?.componentType) setWorkComponent(matched.componentType);
               }}
-              disabled={partsRemote.loading}
-              required
+              disabled={partsRemote.loading || selectedPartCategory === "Tidak Pakai"}
+              required={selectedPartCategory !== "Tidak Pakai"}
             >
-              <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}</option>
-              {selectedPartCategory === "Tidak Pakai" && <option value="Tidak Pakai">Tidak Pakai</option>}
-              {partNames.map(value => <option key={value} value={value}>{value}</option>)}
+              <option value={selectedPartCategory === "Tidak Pakai" ? "Tidak Pakai" : ""}>
+                {selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}
+              </option>
+              {selectedPartCategory !== "Tidak Pakai" && partNames.map(value => <option key={value} value={value}>{value}</option>)}
             </select>
+            {selectedPartCategory === "Tidak Pakai" && <input type="hidden" name="sparepart" value="Tidak Pakai" />}
           </Field>
 
           <Field label="Kode / jenis / ukuran part">
@@ -6014,11 +6017,11 @@ function JobForm({ notify, go, session }) {
                 );
                 if (matched?.componentType) setWorkComponent(matched.componentType);
               }}
-              disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart}
-              required={selectedPartCategory !== "Tidak Pakai" && partSizes.length > 0}
+              disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart || selectedPart === "Tidak Pakai"}
+              required={selectedPartCategory !== "Tidak Pakai" && selectedPart !== "Tidak Pakai" && partSizes.length > 0}
             >
               <option value="">
-                {selectedPartCategory === "Tidak Pakai"
+                {selectedPartCategory === "Tidak Pakai" || selectedPart === "Tidak Pakai"
                   ? "Tidak menggunakan part"
                   : !selectedPart
                     ? "Pilih spare part terlebih dahulu"
@@ -6026,8 +6029,9 @@ function JobForm({ notify, go, session }) {
                       ? "Pilih ukuran part"
                       : "Tidak ada ukuran pada master"}
               </option>
-              {partSizes.map(value => <option key={value} value={value}>{value}</option>)}
+              {selectedPartCategory !== "Tidak Pakai" && selectedPart !== "Tidak Pakai" && partSizes.map(value => <option key={value} value={value}>{value}</option>)}
             </select>
+            {(selectedPartCategory === "Tidak Pakai" || selectedPart === "Tidak Pakai") && <input type="hidden" name="ukuranPart" value="" />}
           </Field>
 
           <ChoiceField label="Nilai perbaikan">
