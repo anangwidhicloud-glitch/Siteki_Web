@@ -262,6 +262,15 @@ const ELECTRICITY_PANELS = [
 ];
 const ELECTRICITY_OFFICER_NAMES = ["Dody Kumala", "Herwidodo", "Irham Abdurahman", "M. Rizal Adi P."];
 const REPORTING_SECTIONS = ["Tek. Shift A", "Tek. Shift B", "Bengkel", "Konstruksi"];
+const JOB_TYPE_OPTIONS = [
+  { value: "Perbaikan", label: "Perbaikan Downtime" },
+  { value: "Perbaikan Biasa", label: "Perbaikan Biasa" },
+  "Pemeriksaan",
+  "Pemasangan",
+  "Pemindahan",
+  "Pembuatan",
+  "Setting"
+];
 function electricityQrRequest(value = window.location.href) {
   try {
     const url = new URL(value, window.location.origin);
@@ -712,6 +721,73 @@ function Dashboard({ go, session }) {
     asArray(await apiGet(ENDPOINTS.partRequests, { action: "getDaftarBon" }, { cache: false, timeout: 45000 }))
       .filter(item => String(item.status || "").toLowerCase() === "open")
   );
+
+  const isKpiLoading = kpiRemote.loading || kpiCombinedRemote.loading || dailyKpiRemote.loading ||
+    (canViewOvertimeChart && overtimeSummaryRemote.loading) ||
+    monthlyKvarhRemote.loading || electricityChecksRemote.loading || cosPhiChartRemote.loading;
+
+  const refreshAllKpis = () => {
+    kpiRemote.reload();
+    kpiCombinedRemote.reload();
+    dailyKpiRemote.reload();
+    if (canViewOvertimeChart) overtimeSummaryRemote.reload();
+    monthlyKvarhRemote.reload();
+    electricityChecksRemote.reload();
+    cosPhiChartRemote.reload();
+  };
+
+  const dashboardVersionRef = useRef(null);
+
+  useEffect(() => {
+    let stopped = false;
+    const checkDashboardChanges = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const result = await apiGet(ENDPOINTS.monitoringVersion, {}, { cache: false, timeout: 10000 });
+        if (stopped) return;
+        const modules = result?.modules;
+        const version = Number(result?.version || 0);
+
+        if (!dashboardVersionRef.current) {
+          dashboardVersionRef.current = modules ? { ...modules, global: version } : { global: version };
+          return;
+        }
+
+        const prev = dashboardVersionRef.current;
+        if (modules) {
+          if (prev.maintenance !== modules.maintenance) maintenanceRemote.reload();
+          if (prev.orders !== modules.orders) ordersRemote.reload();
+          if (prev.inventory !== modules.inventory) partRequestsRemote.reload();
+          if (prev.overtime !== modules.overtime && canViewOvertimeChart) overtimeSummaryRemote.reload();
+          if (prev.electricity !== modules.electricity) {
+            monthlyKvarhRemote.reload();
+            electricityChecksRemote.reload();
+            cosPhiChartRemote.reload();
+          }
+          if (prev.reports !== modules.reports || prev.orders !== modules.orders || prev.maintenance !== modules.maintenance) {
+            kpiRemote.reload();
+            kpiCombinedRemote.reload();
+            dailyKpiRemote.reload();
+          }
+          dashboardVersionRef.current = { ...modules, global: version };
+        } else if (version !== prev.global) {
+          dashboardVersionRef.current = { global: version };
+          refreshAllKpis();
+        }
+      } catch {/* Silent */ }
+    };
+    const timer = window.setInterval(checkDashboardChanges, 60000);
+    const onVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) checkDashboardChanges();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [canViewOvertimeChart]);
+
   const activeOrders = ordersRemote.data;
   const actualMaintenance = maintenanceRemote.data;
   const maintenanceAgenda = useMemo(
@@ -780,15 +856,15 @@ function Dashboard({ go, session }) {
       <ModernStatCard icon={Gauge} label="KPI Perawatan" value={kpiRemote.loading ? 0 : health} unit="%" detail="Data KPI terbaru" color="amber" delay={200} />
       <ModernStatCard icon={Package} label="Bon Sparepart Open" value={partRequestsRemote.loading ? 0 : openPartRequests.length} detail={partRequestsRemote.error ? "Data bon gagal dimuat" : "Klik untuk melihat daftar lengkap"} previewItems={openPartRequests.map(item => item.nama).filter(Boolean)} color="violet" delay={300} onClick={() => go("partRequests")} />
     </div>
-    <div className="section-title dashboard-kpi-title"><div><p className="eyebrow">Live performance</p><h2>Ringkasan KPI Teknik</h2></div><div className="dashboard-kpi-actions"><button className="secondary small" onClick={() => go("monitoringWall")}><Monitor size={15} /> Mode monitor</button><button className="secondary small" onClick={() => go("kpiFull")}>Lihat KPI lengkap <ArrowRight size={15} /></button></div></div>
+    <div className="section-title dashboard-kpi-title"><div><p className="eyebrow">Live performance · update tiap 1 mnt</p><h2>Ringkasan KPI Teknik</h2></div><div className="dashboard-kpi-actions"><button className="secondary small" onClick={refreshAllKpis} title="Perbarui seluruh grafik sekarang"><RefreshCw size={14} className={isKpiLoading ? "spin" : ""} /> Refresh semua</button><button className="secondary small" onClick={() => go("monitoringWall")}><Monitor size={15} /> Mode monitor</button><button className="secondary small" onClick={() => go("kpiFull")}>Lihat KPI lengkap <ArrowRight size={15} /></button></div></div>
     <div className="dashboard-kpi-grid">
-      <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" dailySubtitle="Downtime aktual per hari" icon={TimerReset} value={kpiCombinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={yearToDateLabel} data={downtimeKpi} dailyData={asArray(dailyKpiRemote.data?.downtime)} year={currentYear} enablePeriod target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onClick={() => go("kpiDowntime")} />
-      <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" dailySubtitle="Jumlah pemeriksaan aktual per hari" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" dailyUnit="cek" period={`${maintenanceKpi.at(-1)?.label || "-"} ${currentYear}`} data={maintenanceKpi} dailyData={asArray(dailyKpiRemote.data?.maintenance)} year={currentYear} enablePeriod target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onClick={() => go("kpiMaintenance")} />
-      <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" dailySubtitle="Laporan/order tercatat per hari" icon={ClipboardList} value={kpiCombinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label || "-"} ${currentYear}`} data={orderKpi} dailyData={asArray(dailyKpiRemote.data?.orders)} year={currentYear} enablePeriod color="#ec4899" onClick={() => go("kpi")} />
-      {canViewOvertimeChart && <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" dailySubtitle="Jam lembur aktual per hari" icon={Clock3} value={overtimeSummaryRemote.loading ? 0 : overtimeKpi.reduce((a, b) => a + b.value, 0)} decimals={1} unit="jam" period={yearToDateLabel} data={overtimeKpi} dailyData={asArray(overtimeSummaryRemote.data?.daily)} year={currentYear} enablePeriod color="#22d3ee" />}
+      <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" dailySubtitle="Downtime aktual per hari" icon={TimerReset} value={kpiCombinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={yearToDateLabel} data={downtimeKpi} dailyData={asArray(dailyKpiRemote.data?.downtime)} year={currentYear} enablePeriod target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onClick={() => go("kpiDowntime")} onRefresh={() => { kpiCombinedRemote.reload(); dailyKpiRemote.reload(); }} loading={kpiCombinedRemote.loading || dailyKpiRemote.loading} />
+      <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" dailySubtitle="Jumlah pemeriksaan aktual per hari" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" dailyUnit="cek" period={`${maintenanceKpi.at(-1)?.label || "-"} ${currentYear}`} data={maintenanceKpi} dailyData={asArray(dailyKpiRemote.data?.maintenance)} year={currentYear} enablePeriod target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onClick={() => go("kpiMaintenance")} onRefresh={() => { kpiRemote.reload(); dailyKpiRemote.reload(); }} loading={kpiRemote.loading || dailyKpiRemote.loading} />
+      <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" dailySubtitle="Laporan/order tercatat per hari" icon={ClipboardList} value={kpiCombinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label || "-"} ${currentYear}`} data={orderKpi} dailyData={asArray(dailyKpiRemote.data?.orders)} year={currentYear} enablePeriod color="#ec4899" onClick={() => go("kpi")} onRefresh={() => { kpiCombinedRemote.reload(); dailyKpiRemote.reload(); }} loading={kpiCombinedRemote.loading || dailyKpiRemote.loading} />
+      {canViewOvertimeChart && <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" dailySubtitle="Jam lembur aktual per hari" icon={Clock3} value={overtimeSummaryRemote.loading ? 0 : overtimeKpi.reduce((a, b) => a + b.value, 0)} decimals={1} unit="jam" period={yearToDateLabel} data={overtimeKpi} dailyData={asArray(overtimeSummaryRemote.data?.daily)} year={currentYear} enablePeriod color="#22d3ee" onRefresh={() => overtimeSummaryRemote.reload()} loading={overtimeSummaryRemote.loading} />}
     </div>
-    <MonthlyKvarhCard data={monthlyKvarhRemote.data} rawData={electricityChecksRemote.data} loading={monthlyKvarhRemote.loading} rawLoading={electricityChecksRemote.loading} error={monthlyKvarhRemote.error} rawError={electricityChecksRemote.error} year={currentYear} onRetry={() => { monthlyKvarhRemote.reload(); electricityChecksRemote.reload(); }} />
-    <CosPhiPanelChart data={cosPhiChartRemote.data} loading={cosPhiChartRemote.loading} error={cosPhiChartRemote.error} year={currentYear} onRetry={cosPhiChartRemote.reload} />
+    <MonthlyKvarhCard data={monthlyKvarhRemote.data} rawData={electricityChecksRemote.data} loading={monthlyKvarhRemote.loading} rawLoading={electricityChecksRemote.loading} error={monthlyKvarhRemote.error} rawError={electricityChecksRemote.error} year={currentYear} onRetry={() => { monthlyKvarhRemote.reload(); electricityChecksRemote.reload(); }} onRefresh={() => { monthlyKvarhRemote.reload(); electricityChecksRemote.reload(); }} />
+    <CosPhiPanelChart data={cosPhiChartRemote.data} loading={cosPhiChartRemote.loading} error={cosPhiChartRemote.error} year={currentYear} onRetry={cosPhiChartRemote.reload} onRefresh={cosPhiChartRemote.reload} />
     <div className="section-title"><div><p className="eyebrow">Quick access</p><h2>Kategori kerja</h2></div></div>
     <div className="category-grid">{categories.map(([id, label, Icon, sub, tone]) => <button className="category-card" key={id} onClick={() => go(id)}><span className={`icon-box ${tone}`}><Icon size={23} /></span><b>{label}</b><small>{sub}</small><ArrowRight size={17} /></button>)}</div>
     <div className="dashboard-columns">
@@ -831,7 +907,16 @@ function Dashboard({ go, session }) {
 
 function MonitoringWall({ session, onExit }) {
   const canViewOvertimeChart = ["admin", "teknik"].includes(String(session.role || "").toLowerCase());
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [manualRefreshKey, setManualRefreshKey] = useState(0);
+  const [moduleKeys, setModuleKeys] = useState({
+    orders: 0,
+    reports: 0,
+    maintenance: 0,
+    overtime: 0,
+    electricity: 0,
+    inventory: 0,
+    kpi: 0,
+  });
   const [clock, setClock] = useState(new Date());
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
   const [chartPickerOpen, setChartPickerOpen] = useState(false);
@@ -850,19 +935,57 @@ function MonitoringWall({ session, onExit }) {
     let stopped = false;
     const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
     const checkForChanges = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
-        const result = await apiGet(ENDPOINTS.monitoringVersion, {}, { cache: false, timeout: 5000 });
+        const result = await apiGet(ENDPOINTS.monitoringVersion, {}, { cache: false, timeout: 10000 });
         if (stopped) return;
+        const modules = result?.modules;
         const version = Number(result?.version || 0);
-        if (dataVersionRef.current === null) dataVersionRef.current = version;
-        else if (version !== dataVersionRef.current) { dataVersionRef.current = version; setRefreshKey(key => key + 1); }
+
+        if (!dataVersionRef.current) {
+          dataVersionRef.current = modules ? { ...modules, global: version } : { global: version };
+          return;
+        }
+
+        const prev = dataVersionRef.current;
+        if (modules) {
+          const changed = {};
+          let anyChanged = false;
+          for (const key of ["orders", "reports", "maintenance", "overtime", "electricity", "inventory"]) {
+            if (prev[key] !== modules[key]) {
+              changed[key] = (moduleKeys[key] || 0) + 1;
+              anyChanged = true;
+              if (["orders", "reports", "maintenance"].includes(key)) {
+                changed.kpi = (moduleKeys.kpi || 0) + 1;
+              }
+            }
+          }
+          if (anyChanged) {
+            dataVersionRef.current = { ...modules, global: version };
+            setModuleKeys(curr => ({ ...curr, ...changed }));
+          }
+        } else if (version !== prev.global) {
+          dataVersionRef.current = { global: version };
+          setManualRefreshKey(key => key + 1);
+        }
       } catch {/* Tombol refresh manual tetap tersedia ketika pemeriksaan versi terputus. */ }
     };
     checkForChanges();
-    const versionTimer = window.setInterval(checkForChanges, 3000);
+    const versionTimer = window.setInterval(checkForChanges, 60000);
+    const onVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) checkForChanges();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     const fullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", fullscreenChange);
-    return () => { stopped = true; window.clearInterval(clockTimer); window.clearInterval(versionTimer); document.removeEventListener("fullscreenchange", fullscreenChange); wakeLockRef.current?.release?.().catch(() => { }); };
+    return () => {
+      stopped = true;
+      window.clearInterval(clockTimer);
+      window.clearInterval(versionTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener("fullscreenchange", fullscreenChange);
+      wakeLockRef.current?.release?.().catch(() => { });
+    };
   }, []);
   useEffect(() => {
     const keepSessionAlive = () => apiPost(ENDPOINTS.users, { action: "getMyProfile", token: session.token }, { timeout: 10000 }).catch(() => { });
@@ -876,23 +999,23 @@ function MonitoringWall({ session, onExit }) {
     } catch {/* Browser dapat menolak fullscreen/wake lock; tampilan monitor tetap dapat digunakan. */ }
   };
   const leave = async () => { if (document.fullscreenElement) await document.exitFullscreen().catch(() => { }); onExit(); };
-  const kpiRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.kpi, {}, { cache: false })), [refreshKey], { silentRefresh: true });
-  const combinedRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.kpiCombined, {}, { cache: false }), ["rekap"]), [refreshKey], { silentRefresh: true });
-  const ordersRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.dashboardOrders, { action: "getAllOrders" }, { cache: false })).map(normalizeOrder).filter(order => order.status.toLowerCase() === "open"), [refreshKey], { silentRefresh: true });
-  const partRequestsRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.partRequests, { action: "getDaftarBon" }, { cache: false, timeout: 45000 })).filter(item => String(item.status || "").toLowerCase() === "open"), [refreshKey], { silentRefresh: true });
-  const maintenanceRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.maintenance, { action: "getPerawatan" }, { cache: false })), [refreshKey], { silentRefresh: true });
-  const reportsRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.jobs, { action: "getLaporanKerja", bulan: "", tglAwal: "", tglAkhir: "" }, { cache: false })), [refreshKey], { silentRefresh: true });
+  const kpiRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.kpi, {}, { cache: false, timeout: 30000 })), [manualRefreshKey, moduleKeys.kpi], { silentRefresh: true, retries: 3 });
+  const combinedRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.kpiCombined, {}, { cache: false, timeout: 30000 }), ["rekap"]), [manualRefreshKey, moduleKeys.kpi, moduleKeys.orders, moduleKeys.reports], { silentRefresh: true, retries: 3 });
+  const ordersRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.dashboardOrders, { action: "getAllOrders" }, { cache: false, timeout: 30000 })).map(normalizeOrder).filter(order => order.status.toLowerCase() === "open"), [manualRefreshKey, moduleKeys.orders], { silentRefresh: true, retries: 3 });
+  const partRequestsRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.partRequests, { action: "getDaftarBon" }, { cache: false, timeout: 45000 })).filter(item => String(item.status || "").toLowerCase() === "open"), [manualRefreshKey, moduleKeys.inventory], { silentRefresh: true, retries: 3 });
+  const maintenanceRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.maintenance, { action: "getPerawatan", days: 45 }, { cache: false, timeout: 30000 })), [manualRefreshKey, moduleKeys.maintenance], { silentRefresh: true, retries: 3 });
+  const reportsRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.jobs, { action: "getLaporanKerja", limit: 100 }, { cache: false, timeout: 30000 })), [manualRefreshKey, moduleKeys.reports], { silentRefresh: true, retries: 3 });
   const overtimeRemote = useRemoteData(async () => {
     if (!canViewOvertimeChart) return [];
     const result = await apiPost(ENDPOINTS.users, { action: "getOvertimeChart", token: session.token, year: currentYear }, { timeout: 90000 });
     if (!isSuccess(result)) throw new Error(result.message || "Grafik lembur tidak dapat diakses.");
     return asArray(result);
-  }, [refreshKey, session.token, currentYear, canViewOvertimeChart], { silentRefresh: true });
+  }, [manualRefreshKey, moduleKeys.overtime, session.token, currentYear, canViewOvertimeChart], { silentRefresh: true, retries: 3 });
   const monthlyKvarhRemote = useRemoteData(async () => {
-    const result = await apiGet(ENDPOINTS.electricity, { action: "getMonthlyKvarh", year: currentYear }, { cache: false }); return asArray(result?.data);
-  }, [refreshKey, currentYear], { silentRefresh: true });
-  const electricityChecksRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.electricity, { action: "getData" }, { cache: false })), [refreshKey], { silentRefresh: true });
-  const cosPhiRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.electricity, { action: "getPanelData" }, { cache: false })), [refreshKey], { silentRefresh: true });
+    const result = await apiGet(ENDPOINTS.electricity, { action: "getMonthlyKvarh", year: currentYear }, { cache: false, timeout: 30000 }); return asArray(result?.data);
+  }, [manualRefreshKey, moduleKeys.electricity, currentYear], { silentRefresh: true, retries: 3 });
+  const electricityChecksRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.electricity, { action: "getData" }, { cache: false, timeout: 30000 })), [manualRefreshKey, moduleKeys.electricity], { silentRefresh: true, retries: 3 });
+  const cosPhiRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.electricity, { action: "getPanelData" }, { cache: false, timeout: 30000 })), [manualRefreshKey, moduleKeys.electricity], { silentRefresh: true, retries: 3 });
   const maintenanceKpi = trimChartSeries(kpiRemote.data.map(item => ({ label: monthName(item.bulan), value: Math.round(Number(item.pencapaian || 0) * 100) })).slice(0, currentPeriodEnd));
   const downtimeKpi = trimChartSeries(combinedRemote.data.map(item => ({ label: monthName(item.bulan), value: Number(item.jam || 0) })).slice(0, currentPeriodEnd));
   const orderKpi = trimChartSeries(combinedRemote.data.map(item => ({ label: monthName(item.bulan), value: Number(item.order || 0) })).slice(0, currentPeriodEnd));
@@ -907,7 +1030,7 @@ function MonitoringWall({ session, onExit }) {
   const maintenanceAgenda = useMemo(() => buildMaintenanceAgenda(maintenanceRemote.data, today), [maintenanceRemote.data, today.getFullYear(), today.getMonth(), today.getDate()]);
   const showingPartRequests = agendaSlideIndex % 2 === 0;
   const periodLabel = `Jan–${new Intl.DateTimeFormat("id-ID", { month: "short" }).format(today)} ${currentYear}`;
-  const refresh = () => setRefreshKey(key => key + 1);
+  const refresh = () => setManualRefreshKey(key => key + 1);
   const kvarhMiniData = monthlyKvarhRemote.data.filter(item => Number(item.checkCount) > 0).map(item => ({ label: item.label, value: Number(item.reactiveKvarh) || 0 }));
   const latestKvarh = kvarhMiniData.at(-1)?.value || 0;
   const cosPhiMonthlyLatest = new Map();
@@ -941,12 +1064,12 @@ function MonitoringWall({ session, onExit }) {
   ].filter(([id]) => id !== "overtime" || canViewOvertimeChart);
   const toggleChart = id => setSelectedCharts(current => ({ ...current, [id]: !current[id] }));
   const focusedContent = {
-    kvarh: <MonthlyKvarhCard data={monthlyKvarhRemote.data} rawData={electricityChecksRemote.data} loading={monthlyKvarhRemote.loading} rawLoading={electricityChecksRemote.loading} error={monthlyKvarhRemote.error} rawError={electricityChecksRemote.error} year={currentYear} onRetry={refresh} />,
-    cosphi: <CosPhiPanelChart data={cosPhiRemote.data} loading={cosPhiRemote.loading} error={cosPhiRemote.error} year={currentYear} onRetry={refresh} />,
-    downtime: <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} value={combinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={periodLabel} data={downtimeKpi} target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" />,
-    maintenance: <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" period={`${maintenanceKpi.at(-1)?.label || "-"} ${currentYear}`} data={maintenanceKpi} target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" />,
-    orders: <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} value={combinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label || "-"} ${currentYear}`} data={orderKpi} color="#ec4899" />,
-    overtime: <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" icon={Clock3} value={overtimeRemote.loading ? 0 : overtimeKpi.reduce((total, item) => total + item.value, 0)} decimals={1} unit="jam" period={periodLabel} data={overtimeKpi} color="#22d3ee" />,
+    kvarh: <MonthlyKvarhCard data={monthlyKvarhRemote.data} rawData={electricityChecksRemote.data} loading={monthlyKvarhRemote.loading} rawLoading={electricityChecksRemote.loading} error={monthlyKvarhRemote.error} rawError={electricityChecksRemote.error} year={currentYear} onRetry={refresh} onRefresh={refresh} />,
+    cosphi: <CosPhiPanelChart data={cosPhiRemote.data} loading={cosPhiRemote.loading} error={cosPhiRemote.error} year={currentYear} onRetry={refresh} onRefresh={refresh} />,
+    downtime: <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} value={combinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={periodLabel} data={downtimeKpi} target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onRefresh={refresh} loading={combinedRemote.loading} />,
+    maintenance: <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" period={`${maintenanceKpi.at(-1)?.label || "-"} ${currentYear}`} data={maintenanceKpi} target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onRefresh={refresh} loading={kpiRemote.loading} />,
+    orders: <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} value={combinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label || "-"} ${currentYear}`} data={orderKpi} color="#ec4899" onRefresh={refresh} loading={combinedRemote.loading} />,
+    overtime: <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" icon={Clock3} value={overtimeRemote.loading ? 0 : overtimeKpi.reduce((total, item) => total + item.value, 0)} decimals={1} unit="jam" period={periodLabel} data={overtimeKpi} color="#22d3ee" onRefresh={refresh} loading={overtimeRemote.loading} />,
     reports: <section className="monitoring-selected-table"><div className="monitoring-selected-table-head"><div><p className="eyebrow">Tanggal data terbaru</p><h2>Laporan kerja {latestReportDate || "-"}</h2></div><span>{latestReports.length} laporan</span></div><div className="table-wrap"><table><thead><tr><th>Bagian</th><th>Mesin</th><th>Laporan pekerjaan</th><th>Mulai</th><th>Selesai</th><th>Durasi</th></tr></thead><tbody>{latestReports.map((report, index) => <tr key={report.id || report.rowIndex || index}><td>{report.bagian || "-"}</td><td><b>{report.namaMesin || report.mesin || "-"}</b></td><td>{report.laporan || report.laporanPekerjaan || "-"}</td><td>{report.jamMulai || "-"}</td><td>{report.jamSelesai || "-"}</td><td>{Number(report.totalJam) > 0 ? `${Number(report.totalJam).toLocaleString("id-ID", { maximumFractionDigits: 2 })} jam` : "-"}</td></tr>)}</tbody></table></div></section>,
     active_orders: <section className="monitoring-selected-table"><div className="monitoring-selected-table-head"><div><p className="eyebrow">Operasional teknik</p><h2>Seluruh order kerja aktif</h2></div><span>{ordersRemote.data.length} order</span></div><RemoteState loading={ordersRemote.loading} error={ordersRemote.error} empty={!ordersRemote.data.length} onRetry={ordersRemote.reload} />{!ordersRemote.loading && !ordersRemote.error && ordersRemote.data.length > 0 && <OrderTable orders={ordersRemote.data} onClick={() => { }} />}</section>,
     part_requests: <section className="monitoring-selected-table"><div className="monitoring-selected-table-head"><div><p className="eyebrow">Kebutuhan sparepart</p><h2>Bon Sparepart Open</h2></div><span>{openPartRequests.length} barang</span></div><RemoteState loading={partRequestsRemote.loading} error={partRequestsRemote.error} empty={!openPartRequests.length} onRetry={partRequestsRemote.reload} />{!partRequestsRemote.loading && !partRequestsRemote.error && openPartRequests.length > 0 && <div className="table-wrap"><table><thead><tr><th>Tanggal</th><th>Nomor bon</th><th>Nama barang</th><th>Jumlah</th><th>Pemesan</th><th>Mesin / kebutuhan</th></tr></thead><tbody>{openPartRequests.map((item, index) => <tr key={item.id || index}><td>{item.tglPesan || item.tanggal || "-"}</td><td><b>{item.transactionNumber || "-"}</b></td><td>{item.nama || "-"}<small>{[item.kategori, item.ukuran].filter(Boolean).join(" · ")}</small></td><td>{Number(item.jmlPesan || 0).toLocaleString("id-ID")} {item.satuan || ""}</td><td>{item.pemesan || "-"}</td><td>{item.mesin || "-"}</td></tr>)}</tbody></table></div>}</section>,
@@ -965,10 +1088,10 @@ function MonitoringWall({ session, onExit }) {
   };
   const featuredCount = 2;
   const topChartCards = [
-    { id: "kvarh", node: <ModernKpiCard title="Energi Reaktif PLN" subtitle="Aktual kVArh bulanan" icon={Zap} value={monthlyKvarhRemote.loading ? 0 : latestKvarh} decimals={2} unit="kVArh" period={periodLabel} data={kvarhMiniData} color="#a78bfa" onClick={() => setFocusedChart("kvarh")} /> },
-    { id: "cosphi", node: <ModernKpiCard title="Faktor Daya" subtitle="Cos φ terendah Panel 1–4" icon={Activity} value={cosPhiRemote.loading ? 0 : latestCosPhi} decimals={2} period={periodLabel} data={cosPhiMiniData} target={.85} targetLabel="Minimum 0,85" color="#22d3ee" onClick={() => setFocusedChart("cosphi")} /> },
-    { id: "orders", node: <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} value={combinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label || "-"} ${currentYear}`} data={orderKpi} color="#ec4899" onClick={() => setFocusedChart("orders")} /> },
-    canViewOvertimeChart && { id: "overtime", node: <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" icon={Clock3} value={overtimeRemote.loading ? 0 : overtimeKpi.reduce((total, item) => total + item.value, 0)} decimals={1} unit="jam" period={periodLabel} data={overtimeKpi} color="#22d3ee" onClick={() => setFocusedChart("overtime")} /> },
+    { id: "kvarh", node: <ModernKpiCard title="Energi Reaktif PLN" subtitle="Aktual kVArh bulanan" icon={Zap} value={monthlyKvarhRemote.loading ? 0 : latestKvarh} decimals={2} unit="kVArh" period={periodLabel} data={kvarhMiniData} color="#a78bfa" onClick={() => setFocusedChart("kvarh")} onRefresh={refresh} loading={monthlyKvarhRemote.loading} /> },
+    { id: "cosphi", node: <ModernKpiCard title="Faktor Daya" subtitle="Cos φ terendah Panel 1–4" icon={Activity} value={cosPhiRemote.loading ? 0 : latestCosPhi} decimals={2} period={periodLabel} data={cosPhiMiniData} target={.85} targetLabel="Minimum 0,85" color="#22d3ee" onClick={() => setFocusedChart("cosphi")} onRefresh={refresh} loading={cosPhiRemote.loading} /> },
+    { id: "orders", node: <ModernKpiCard title="Order Kerja" subtitle="Permintaan pekerjaan bulanan" icon={ClipboardList} value={combinedRemote.loading ? 0 : orderKpi.at(-1)?.value || 0} unit="WO" period={`${orderKpi.at(-1)?.label || "-"} ${currentYear}`} data={orderKpi} color="#ec4899" onClick={() => setFocusedChart("orders")} onRefresh={refresh} loading={combinedRemote.loading} /> },
+    canViewOvertimeChart && { id: "overtime", node: <ModernKpiCard title="Jam Lembur" subtitle="Akumulasi Admin & Teknik" icon={Clock3} value={overtimeRemote.loading ? 0 : overtimeKpi.reduce((total, item) => total + item.value, 0)} decimals={1} unit="jam" period={periodLabel} data={overtimeKpi} color="#22d3ee" onClick={() => setFocusedChart("overtime")} onRefresh={refresh} loading={overtimeRemote.loading} /> },
   ].filter(Boolean);
   const energyCards = topChartCards.filter(item => ["kvarh", "cosphi"].includes(item.id));
   const workCards = topChartCards.filter(item => ["orders", "overtime"].includes(item.id));
@@ -1017,10 +1140,10 @@ function MonitoringWall({ session, onExit }) {
     {selectedChartIds.length > 0 && <main className={`monitoring-selected-charts count-${selectedChartIds.length}`}><button className="monitoring-selection-close" onClick={clearSelectedCharts}><X size={16} /> Kembali ke monitor</button>{selectedChartIds.map(id => <section key={id} className={`monitoring-selected-chart selected-${id}`}>{focusedContent[id]}</section>)}</main>}
     <main className={`monitoring-wall-content ${selectedChartIds.length ? "selection-hidden" : ""}`} onClick={openTableCard}>
       <section className="monitoring-wall-stats">
-        <ModernStatCard icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading ? 0 : ordersRemote.data.length} color="mint" delay={0} />
-        <ModernStatCard icon={TimerReset} label="Downtime YTD" value={combinedRemote.loading ? 0 : downtimeYearToDate} unit=" jam" color="blue" delay={50} />
-        <ModernStatCard icon={Gauge} label="KPI Perawatan" value={kpiRemote.loading ? 0 : health} unit="%" color="amber" delay={100} />
-        <ModernStatCard key={missingReportSection} icon={ClipboardCheck} label="Belum laporan kerja" displayValue={reportsRemote.loading ? "Memuat…" : missingReportSection} detail={latestReportDate ? `Acuan ${latestReportDate} · ${missingReportSections.length} bagian` : "Belum ada laporan"} color={missingReportSections.length ? "rose" : "violet"} delay={150} className="missing-report-stat" />
+        <ModernStatCard icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading ? 0 : ordersRemote.data.length} color="mint" delay={0} onRefresh={ordersRemote.reload} loading={ordersRemote.loading} />
+        <ModernStatCard icon={TimerReset} label="Downtime YTD" value={combinedRemote.loading ? 0 : downtimeYearToDate} unit=" jam" color="blue" delay={50} onRefresh={combinedRemote.reload} loading={combinedRemote.loading} />
+        <ModernStatCard icon={Gauge} label="KPI Perawatan" value={kpiRemote.loading ? 0 : health} unit="%" color="amber" delay={100} onRefresh={kpiRemote.reload} loading={kpiRemote.loading} />
+        <ModernStatCard key={missingReportSection} icon={ClipboardCheck} label="Belum laporan kerja" displayValue={reportsRemote.loading ? "Memuat…" : missingReportSection} detail={latestReportDate ? `Acuan ${latestReportDate} · ${missingReportSections.length} bagian` : "Belum ada laporan"} color={missingReportSections.length ? "rose" : "violet"} delay={150} className="missing-report-stat" onRefresh={reportsRemote.reload} loading={reportsRemote.loading} />
       </section>
       <section className="monitoring-wall-body">
         <div className="monitoring-wall-chart-column">
@@ -1035,21 +1158,21 @@ function MonitoringWall({ session, onExit }) {
             </div>
           </section>
           <section className="monitoring-wall-details">
-            <div className="monitoring-downtime-slot">{visibleCharts.downtime && <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} value={combinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={periodLabel} data={downtimeKpi} target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onClick={() => setFocusedChart("downtime")} />}</div>
-            <div className="monitoring-maintenance-slot">{visibleCharts.maintenance && <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" period={`${maintenanceKpi.at(-1)?.label || "-"} ${currentYear}`} data={maintenanceKpi} target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onClick={() => setFocusedChart("maintenance")} />}</div>
+            <div className="monitoring-downtime-slot">{visibleCharts.downtime && <ModernKpiCard title="Downtime" subtitle="Akumulasi gangguan mesin" icon={TimerReset} value={combinedRemote.loading ? 0 : downtimeYearToDate} decimals={1} unit="jam" period={periodLabel} data={downtimeKpi} target={downtimeTarget} targetLabel={`Batas ${downtimeTarget} jam/bulan`} color="#ff9f1c" onClick={() => setFocusedChart("downtime")} onRefresh={combinedRemote.reload} loading={combinedRemote.loading} />}</div>
+            <div className="monitoring-maintenance-slot">{visibleCharts.maintenance && <ModernKpiCard title="Perawatan" subtitle="Pencapaian preventive maintenance" icon={Wrench} value={kpiRemote.loading ? 0 : health} unit="%" period={`${maintenanceKpi.at(-1)?.label || "-"} ${currentYear}`} data={maintenanceKpi} target={maintenanceTarget} targetLabel={`Target ${maintenanceTarget}%`} color="#22c55e" onClick={() => setFocusedChart("maintenance")} onRefresh={kpiRemote.reload} loading={kpiRemote.loading} />}</div>
             <div className={`monitoring-wall-operations ${featuredCount ? "" : "full"}`}>
-              <section className="monitoring-wall-panel monitoring-orders-panel"><div className="monitoring-panel-head"><h2>Order kerja aktif</h2><span>{ordersRemote.data.length} order terbuka</span></div><RemoteState loading={ordersRemote.loading} error={ordersRemote.error} empty={!ordersRemote.data.length} onRetry={ordersRemote.reload} />{!ordersRemote.loading && !ordersRemote.error && ordersRemote.data.length > 0 && <OrderTable orders={ordersRemote.data.slice(0, 5)} onClick={() => { }} />}</section>
+              <section className="monitoring-wall-panel monitoring-orders-panel"><div className="monitoring-panel-head"><h2>Order kerja aktif</h2><div className="monitoring-panel-actions"><span>{ordersRemote.data.length} order terbuka</span><button type="button" className="kpi-refresh-btn mini" title="Perbarui order aktif" onClick={ordersRemote.reload}><RefreshCw size={11} className={ordersRemote.loading ? "spin" : ""} /></button></div></div><RemoteState loading={ordersRemote.loading} error={ordersRemote.error} empty={!ordersRemote.data.length} onRetry={ordersRemote.reload} />{!ordersRemote.loading && !ordersRemote.error && ordersRemote.data.length > 0 && <OrderTable orders={ordersRemote.data.slice(0, 5)} onClick={() => { }} />}</section>
               <section className="monitoring-wall-panel monitoring-agenda-panel">
                 <div key={agendaSlideIndex} className="monitoring-agenda-slide">
                   {showingPartRequests ? <>
-                    <div className="monitoring-panel-head"><h2>Bon sparepart open</h2><span>{openPartRequests.length} barang</span></div>
+                    <div className="monitoring-panel-head"><h2>Bon sparepart open</h2><div className="monitoring-panel-actions"><span>{openPartRequests.length} barang</span><button type="button" className="kpi-refresh-btn mini" title="Perbarui bon sparepart" onClick={partRequestsRemote.reload}><RefreshCw size={11} className={partRequestsRemote.loading ? "spin" : ""} /></button></div></div>
                     <RemoteState loading={partRequestsRemote.loading} error={partRequestsRemote.error} empty={!openPartRequests.length} onRetry={partRequestsRemote.reload} />
                     {!partRequestsRemote.loading && !partRequestsRemote.error && openPartRequests.length > 0 && <div className="agenda">{openPartRequests.slice(0, 5).map(item => {
                       const [day = "--", month = "--"] = String(item.tglPesan || item.tanggal || "").split("/");
                       return <div className="monitoring-agenda-item" key={item.id}><span className="date-box today"><b>{day}</b><small>{month}</small></span><span><b>{item.nama || "Tanpa nama barang"}</b><small><em className="agenda-type weekly">{Number(item.jmlPesan || 0).toLocaleString("id-ID")} {item.satuan || ""}</em> · {item.transactionNumber || "Bon"} · {item.pemesan || "-"}</small></span></div>;
                     })}</div>}
                   </> : <>
-                    <div className="monitoring-panel-head"><h2>Agenda terdekat</h2><span>{maintenanceAgenda.items.length} aset</span></div>
+                    <div className="monitoring-panel-head"><h2>Agenda terdekat</h2><div className="monitoring-panel-actions"><span>{maintenanceAgenda.items.length} aset</span><button type="button" className="kpi-refresh-btn mini" title="Perbarui agenda" onClick={maintenanceRemote.reload}><RefreshCw size={11} className={maintenanceRemote.loading ? "spin" : ""} /></button></div></div>
                     <RemoteState loading={maintenanceRemote.loading} error={maintenanceRemote.error} empty={!maintenanceAgenda.items.length} onRetry={maintenanceRemote.reload} />
                     {!maintenanceRemote.loading && !maintenanceRemote.error && <>
                       <div className={`agenda-context ${maintenanceAgenda.source === "previous-week" ? "overdue" : ""}`}><CalendarDays size={16} /><span><b>{maintenanceAgenda.title}</b><small>{maintenanceAgenda.description}</small></span></div>
@@ -1063,7 +1186,7 @@ function MonitoringWall({ session, onExit }) {
           </section>
         </div>
         <section className="monitoring-wall-panel monitoring-latest-reports">
-          <div className="monitoring-panel-head"><div><h2>Laporan pekerjaan terakhir</h2><small>Aktivitas pada tanggal data terbaru</small></div><span>{latestReportDate || "Belum ada data"}</span></div>
+          <div className="monitoring-panel-head"><div><h2>Laporan pekerjaan terakhir</h2><small>Aktivitas pada tanggal data terbaru</small></div><div className="monitoring-panel-actions"><span>{latestReportDate || "Belum ada data"}</span><button type="button" className="kpi-refresh-btn mini" title="Perbarui laporan kerja" onClick={reportsRemote.reload}><RefreshCw size={11} className={reportsRemote.loading ? "spin" : ""} /></button></div></div>
           <RemoteState loading={reportsRemote.loading} error={reportsRemote.error} empty={!latestReports.length} onRetry={reportsRemote.reload} />
           {!reportsRemote.loading && !reportsRemote.error && latestReports.length > 0 && <div key={activeReportSlide} className="monitoring-report-list">{visibleLatestReports.map((report, index) => <article key={report.id || report.rowIndex || `${report.tanggal}-${index}`}><span className="monitoring-report-number">{String(activeReportSlide * reportsPerSlide + index + 1).padStart(2, "0")}</span><div><b>{report.namaMesin || report.mesin || "Tanpa nama mesin"}</b><p>{report.laporan || report.laporanPekerjaan || "Tanpa uraian pekerjaan"}</p><small>{report.bagian || "Tanpa bagian"}{Number(report.totalJam) > 0 ? ` · ${Number(report.totalJam).toLocaleString("id-ID", { maximumFractionDigits: 2 })} jam` : ""}</small></div></article>)}</div>}
           {reportSlideCount > 1 && <div className="monitoring-report-pagination"><span>{activeReportSlide + 1}/{reportSlideCount}</span>{Array.from({ length: reportSlideCount }, (_, index) => <button key={index} className={index === activeReportSlide ? "active" : ""} onClick={() => setReportSlideIndex(index)} aria-label={`Halaman laporan ${index + 1}`} />)}</div>}
@@ -1114,7 +1237,7 @@ function AnimatedCounter({ value, duration = 1500, decimals = 0 }) {
 /* ============================================
    MODERN STAT CARD WITH TREND
    ============================================ */
-function ModernStatCard({ icon: Icon, label, value, displayValue, detail, previewItems = [], trend, trendValue, color = 'mint', delay = 0, unit = '', className = '', onClick }) {
+function ModernStatCard({ icon: Icon, label, value, displayValue, detail, previewItems = [], trend, trendValue, color = 'mint', delay = 0, unit = '', className = '', onClick, onRefresh, loading = false }) {
   const [isVisible, setIsVisible] = useState(false);
   const cardRef = useRef(null);
 
@@ -1161,6 +1284,20 @@ function ModernStatCard({ icon: Icon, label, value, displayValue, detail, previe
         }
       } : undefined}
     >
+      {onRefresh && (
+        <button
+          type="button"
+          className="kpi-refresh-btn mini stat-refresh-btn"
+          title={`Perbarui ${label}`}
+          onClick={event => {
+            event.stopPropagation();
+            onRefresh();
+          }}
+          aria-label={`Perbarui ${label}`}
+        >
+          <RefreshCw size={11} className={loading ? "spin" : ""} />
+        </button>
+      )}
       <div className="stat-icon">
         <Icon size={24} />
       </div>
@@ -1194,7 +1331,8 @@ function ModernStatCard({ icon: Icon, label, value, displayValue, detail, previe
 function ModernKpiCard({
   title, subtitle, icon: Icon, value, unit = "", decimals = 0, period = "",
   data = [], dailyData = [], dailyUnit = "", dailySubtitle = "", year = new Date().getFullYear(),
-  enablePeriod = false, target = 0, targetLabel = "", color = "#6366f1", onClick
+  enablePeriod = false, target = 0, targetLabel = "", color = "#6366f1", onClick,
+  onRefresh, loading = false
 }) {
   const [animated, setAnimated] = useState(false);
   const [activePoint, setActivePoint] = useState(null);
@@ -1329,6 +1467,20 @@ function ModernKpiCard({
           {effectiveSubtitle && <div className="kpi-card-subtitle">{effectiveSubtitle}</div>}
         </div>
         {enablePeriod && <label className="kpi-period-control" onClick={event => event.stopPropagation()}><span>Periode</span><select value={periodChoice} onChange={event => { setPeriodChoice(event.target.value); setActivePoint(null); }}><option value="year">Tahunan {year}</option>{SCHEDULE_MONTHS.slice(0, selectableMonthCount).map((month, index) => <option key={month} value={index + 1}>{month} {year}</option>)}</select></label>}
+        {onRefresh && (
+          <button
+            type="button"
+            className="kpi-refresh-btn"
+            title={`Perbarui grafik ${title}`}
+            onClick={event => {
+              event.stopPropagation();
+              onRefresh();
+            }}
+            aria-label={`Perbarui grafik ${title}`}
+          >
+            <RefreshCw size={13} className={loading ? "spin" : ""} />
+          </button>
+        )}
         {onClick && <div className="kpi-arr" aria-hidden="true">→</div>}
       </div>
       <div ref={chartRef} className="kpi-chart" onClick={event => event.stopPropagation()}>
@@ -1393,7 +1545,7 @@ function ModernKpiCard({
   );
 }
 
-function MonthlyKvarhCard({ data = [], rawData = [], loading, rawLoading, error, rawError, year, onRetry }) {
+function MonthlyKvarhCard({ data = [], rawData = [], loading, rawLoading, error, rawError, year, onRetry, onRefresh }) {
   const today = new Date();
   const currentMonth = today.getMonth() + 1;
   const currentDay = today.getDate();
@@ -1496,7 +1648,25 @@ function MonthlyKvarhCard({ data = [], rawData = [], loading, rawLoading, error,
   return <article className="monthly-kvarh-card">
     <div className="monthly-kvarh-head">
       <div className="monthly-kvarh-title"><span className="kpi-icon-wrap"><Zap size={19} /></span><div><p className="eyebrow">Energi reaktif PLN</p><h3>{title}</h3><small>{subtitle}</small></div></div>
-      <div className="monthly-kvarh-controls"><label><span>Pilih periode</span><select value={periodChoice} onChange={event => { setPeriodChoice(event.target.value); setActivePoint(null); }}><option value="year">Bulanan — 1 tahun</option>{SCHEDULE_MONTHS.slice(0, currentMonth).map((month, index) => <option key={month} value={index + 1}>{month} {year}</option>)}</select></label>{latest && <div className={`monthly-kvarh-status ${latest.conclusion === "AMAN" ? "safe" : "penalty"}`}><span>{latest.label} {year}{latest.isPartial ? " · Sementara" : ""}</span><b>{latest.conclusion}</b><small>Selisih {latest.reactiveLimitKvarh - latest.reactiveKvarh >= 0 ? "+" : "−"}{number(Math.abs(latest.reactiveLimitKvarh - latest.reactiveKvarh))} kVArh</small></div>}</div>
+      <div className="monthly-kvarh-controls">
+        <label><span>Pilih periode</span><select value={periodChoice} onChange={event => { setPeriodChoice(event.target.value); setActivePoint(null); }}><option value="year">Bulanan — 1 tahun</option>{SCHEDULE_MONTHS.slice(0, currentMonth).map((month, index) => <option key={month} value={index + 1}>{month} {year}</option>)}</select></label>
+        {latest && <div className={`monthly-kvarh-status ${latest.conclusion === "AMAN" ? "safe" : "penalty"}`}><span>{latest.label} {year}{latest.isPartial ? " · Sementara" : ""}</span><b>{latest.conclusion}</b><small>Selisih {latest.reactiveLimitKvarh - latest.reactiveKvarh >= 0 ? "+" : "−"}{number(Math.abs(latest.reactiveLimitKvarh - latest.reactiveKvarh))} kVArh</small></div>}
+        {(onRefresh || onRetry) && (
+          <button
+            type="button"
+            className="kpi-refresh-btn"
+            title="Perbarui grafik kVArh"
+            onClick={event => {
+              event.stopPropagation();
+              if (onRefresh) onRefresh();
+              else if (onRetry) onRetry();
+            }}
+            aria-label="Perbarui grafik kVArh"
+          >
+            <RefreshCw size={13} className={activeLoading ? "spin" : ""} />
+          </button>
+        )}
+      </div>
     </div>
     {activeLoading ? <div className="kvarh-state">Memuat grafik kVArh…</div> : activeError ? <div className="kvarh-state error">Grafik gagal dimuat. <button type="button" onClick={onRetry}>Coba lagi</button></div> : !populated.length ? <div className="kvarh-state">Belum ada isian stand meter pada {selectedMonth ? `${selectedMonthName} ` : ""}{year}.</div> : <>
       <div className="monthly-kvarh-chart">
@@ -1517,7 +1687,7 @@ function MonthlyKvarhCard({ data = [], rawData = [], loading, rawLoading, error,
   </article>;
 }
 
-function CosPhiPanelChart({ data = [], loading, error, year, onRetry }) {
+function CosPhiPanelChart({ data = [], loading, error, year, onRetry, onRefresh }) {
   const minimumAllowed = .85;
   const today = new Date();
   const currentMonth = today.getMonth() + 1;
@@ -1569,7 +1739,25 @@ function CosPhiPanelChart({ data = [], loading, error, year, onRetry }) {
   return <article className="cosphi-chart-card">
     <div className="cosphi-chart-head">
       <div className="cosphi-chart-title"><span className="kpi-icon-wrap"><Activity size={19} /></span><div><p className="eyebrow">Monitoring faktor daya panel</p><h3>Grafik cos φ · {selectedSeries.name}</h3><small>Dua pemeriksaan harian ditampilkan berdasarkan tanggal dan jam pencatatan.</small></div></div>
-      <div className="cosphi-chart-controls"><label><span>Pilih bulan</span><select value={selectedMonth} onChange={event => { setSelectedMonth(Number(event.target.value)); setActivePoint(null); }}>{selectableMonths.map((month, index) => <option key={month} value={index + 1}>{month} {year}</option>)}</select></label><div className="cosphi-allowed"><span>Batas monitoring</span><b>0,85–1,00</b><small>Di bawah 0,85 perlu perhatian</small></div></div>
+      <div className="cosphi-chart-controls">
+        <label><span>Pilih bulan</span><select value={selectedMonth} onChange={event => { setSelectedMonth(Number(event.target.value)); setActivePoint(null); }}>{selectableMonths.map((month, index) => <option key={month} value={index + 1}>{month} {year}</option>)}</select></label>
+        <div className="cosphi-allowed"><span>Batas monitoring</span><b>0,85–1,00</b><small>Di bawah 0,85 perlu perhatian</small></div>
+        {(onRefresh || onRetry) && (
+          <button
+            type="button"
+            className="kpi-refresh-btn"
+            title="Perbarui grafik cos phi"
+            onClick={event => {
+              event.stopPropagation();
+              if (onRefresh) onRefresh();
+              else if (onRetry) onRetry();
+            }}
+            aria-label="Perbarui grafik cos phi"
+          >
+            <RefreshCw size={13} className={loading ? "spin" : ""} />
+          </button>
+        )}
+      </div>
     </div>
     {attentionPanels.length ? <div className="cosphi-panel-alert"><AlertTriangle size={17} /><span><b>Panel perlu perhatian</b><small>{attentionPanels.map(panel => `${panel.name} (${number(panel.latest.value)})`).join(" · ")} berdasarkan pembacaan terakhir.</small></span></div> : <div className="cosphi-panel-alert safe"><CheckCircle2 size={17} /><span><b>Seluruh panel dalam batas</b><small>Pembacaan terakhir semua panel berada pada nilai minimum 0,85 atau lebih.</small></span></div>}
     <div className="cosphi-panel-selector" role="tablist" aria-label="Pilih grafik panel">{latestByPanel.map(panel => {
@@ -4396,8 +4584,26 @@ function Jobs({ go, session, notify }) {
   const currentYear = String(now.getFullYear());
   const currentMonth = String(now.getMonth() + 1).padStart(2, "0");
   const [query, setQuery] = useState("");
-  const [filters, setFilters] = useState({
-    year: currentYear, month: currentMonth, category: "", type: "", machine: "", section: ""
+  const [filters, setFilters] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("siteki-jobs-filters");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          return {
+            year: parsed.year || currentYear,
+            month: parsed.month || currentMonth,
+            category: parsed.category || "",
+            type: parsed.type || "",
+            machine: parsed.machine || "",
+            section: parsed.section || ""
+          };
+        }
+      }
+    } catch { }
+    return {
+      year: currentYear, month: currentMonth, category: "", type: "", machine: "", section: ""
+    };
   });
   const requestedPeriod = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" })
     .format(new Date(Number(filters.year), Number(filters.month) - 1, 1));
@@ -4497,14 +4703,24 @@ function Jobs({ go, session, notify }) {
       return sort.direction === "asc" ? comparison : -comparison;
     });
   }, [remote.data, query, filters, sort]);
-  const setFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }));
+  const setFilter = (key, value) => setFilters(current => {
+    const next = { ...current, [key]: value };
+    try {
+      sessionStorage.setItem("siteki-jobs-filters", JSON.stringify(next));
+    } catch { }
+    return next;
+  });
   const toggleSort = key => setSort(current => ({
     key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc"
   }));
   const sortLabel = key => sort.key === key ? (sort.direction === "asc" ? "↑" : "↓") : "↕";
   const resetFilters = () => {
     setQuery("");
-    setFilters({ year: currentYear, month: currentMonth, category: "", type: "", machine: "", section: "" });
+    const reset = { year: currentYear, month: currentMonth, category: "", type: "", machine: "", section: "" };
+    setFilters(reset);
+    try {
+      sessionStorage.setItem("siteki-jobs-filters", JSON.stringify(reset));
+    } catch { }
   };
   const pageCount = Math.max(1, Math.ceil(visibleReports.length / pageSize));
   const pagedReports = visibleReports.slice((page - 1) * pageSize, page * pageSize);
@@ -4531,11 +4747,22 @@ function Jobs({ go, session, notify }) {
 
   const saveReport = async data => {
     if (!editing?.rowIndex) throw new Error("Identitas baris laporan tidak tersedia.");
-    const result = await apiPost(ENDPOINTS.jobs, {
+    const mappedSection = data.bagian === "Teknik A"
+      ? "Tek. Shift A"
+      : data.bagian === "Teknik B"
+        ? "Tek. Shift B"
+        : data.bagian;
+    const payload = {
       action: "updateReport", token: session.token, rowIndex: editing.rowIndex,
       sheetId: editing.sheetId, sheetName: editing.sheetName, ...data,
-      tanggal: toIdDate(data.tanggal)
-    });
+      bagian: mappedSection,
+      tanggal: toIdDate(data.tanggal),
+      jamMulai: data.tglMulai && data.jamMulai ? `${toIdDate(data.tglMulai)} ${data.jamMulai}` : data.jamMulai || "",
+      jamSelesai: data.tglSelesai && data.jamSelesai ? `${toIdDate(data.tglSelesai)} ${data.jamSelesai}` : data.jamSelesai || "",
+      partNama: data.sparepart,
+      partUkuran: data.ukuranPart || ""
+    };
+    const result = await apiPost(ENDPOINTS.jobs, payload);
     if (!isSuccess(result)) throw new Error(result.message || "Laporan gagal diperbarui.");
     setEditing(null);
     notify("Perubahan laporan kerja berhasil disimpan.");
@@ -4599,7 +4826,7 @@ function Jobs({ go, session, notify }) {
       </div>}
     </Panel>
     {selectedReport && <ReportDetailModal report={selectedReport} onClose={() => setSelectedReport(null)} />}
-    {editing && <ReportAdminEditor report={editing} onClose={() => setEditing(null)} onSave={saveReport} />}
+    {editing && <ReportAdminEditor report={editing} onClose={() => setEditing(null)} onSave={saveReport} session={session} notify={notify} />}
   </>;
 }
 
@@ -4663,38 +4890,413 @@ function ReportDetailModal({ report, onClose }) {
   </div>;
 }
 
-function ReportAdminEditor({ report, onClose, onSave }) {
+function ReportAdminEditor({ report, onClose, onSave, session, notify }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const machines = useRemoteData(loadMachineMaster);
+  const partsRemote = useRemoteData(async () => asArray(await apiGet(ENDPOINTS.partMaster, { action: "getPart" }), ["stok", "parts"]));
+
   const dateValue = useMemo(() => {
-    const match = String(report.tanggal || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    return match ? `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}` : "";
+    const raw = report.tanggal || "";
+    const match = String(raw).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (match) return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    return new Date().toISOString().slice(0, 10);
   }, [report.tanggal]);
+
+  const parseStart = useMemo(() => {
+    const raw = report.jamMulai || report.awal || report.tanggalMulai || report.tglMulai || report.tanggal || "";
+    const matchDmy = String(raw).match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+    if (matchDmy) {
+      return {
+        date: `${matchDmy[3]}-${matchDmy[2].padStart(2, "0")}-${matchDmy[1].padStart(2, "0")}`,
+        time: matchDmy[4] ? `${matchDmy[4].padStart(2, "0")}:${matchDmy[5]}` : "08:00"
+      };
+    }
+    const matchIso = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{2}))?/);
+    if (matchIso) {
+      return {
+        date: `${matchIso[1]}-${matchIso[2]}-${matchIso[3]}`,
+        time: matchIso[4] ? `${matchIso[4].padStart(2, "0")}:${matchIso[5]}` : "08:00"
+      };
+    }
+    return { date: dateValue, time: "08:00" };
+  }, [report, dateValue]);
+
+  const parseFinish = useMemo(() => {
+    const raw = report.jamSelesai || report.akhir || report.tanggalSelesai || report.tglSelesai || "";
+    const matchDmy = String(raw).match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+    if (matchDmy) {
+      return {
+        date: `${matchDmy[3]}-${matchDmy[2].padStart(2, "0")}-${matchDmy[1].padStart(2, "0")}`,
+        time: matchDmy[4] ? `${matchDmy[4].padStart(2, "0")}:${matchDmy[5]}` : "09:00"
+      };
+    }
+    const matchIso = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2}):(\d{2}))?/);
+    if (matchIso) {
+      return {
+        date: `${matchIso[1]}-${matchIso[2]}-${matchIso[3]}`,
+        time: matchIso[4] ? `${matchIso[4].padStart(2, "0")}:${matchIso[5]}` : "09:00"
+      };
+    }
+    return { date: parseStart.date || dateValue, time: "09:00" };
+  }, [report, parseStart.date, dateValue]);
+
+  const initialSection = useMemo(() => {
+    const raw = report.bagian || "";
+    if (raw === "Tek. Shift A") return "Teknik A";
+    if (raw === "Tek. Shift B") return "Teknik B";
+    return raw;
+  }, [report.bagian]);
+
+  const [section, setSection] = useState(initialSection);
+  const [machineType, setMachineType] = useState(report.jenis || "");
+  const [machineName, setMachineName] = useState(report.mesin || report.namaMesin || "");
+  const [jobType, setJobType] = useState(report.jenisPekerjaan || "Perbaikan");
+  const [workComponent, setWorkComponent] = useState(report.jenisKomponen || "Mekanikal");
+  const [startDate, setStartDate] = useState(parseStart.date);
+  const [startTime, setStartTime] = useState(parseStart.time);
+  const [endDate, setEndDate] = useState(parseFinish.date);
+  const [endTime, setEndTime] = useState(parseFinish.time);
+  const [definisi, setDefinisi] = useState(report.definisi || "");
+  const [selectedPartCategory, setSelectedPartCategory] = useState(report.partKategori || (report.sparepart && report.sparepart !== "Tidak Pakai" ? "" : "Tidak Pakai"));
+  const [selectedPart, setSelectedPart] = useState(report.sparepart || report.partNama || "Tidak Pakai");
+  const [partSize, setPartSize] = useState(report.ukuranPart || report.partUkuran || "");
+  const [partSearch, setPartSearch] = useState("");
+  const [partSearchOpen, setPartSearchOpen] = useState(false);
+  const [showAddPart, setShowAddPart] = useState(false);
+  const [order, setOrder] = useState(report.order || "Tanpa Order");
+  const [statusOrder, setStatusOrder] = useState(report.statusOrder || "Close");
+  const [nilaiPerbaikan, setNilaiPerbaikan] = useState(report.nilaiPerbaikan || "Bagus");
+  const isAdmin = String(session?.role || "").toLowerCase() === "admin";
+
+  const readValue = (item, keys) => {
+    for (const key of keys) {
+      const value = item?.[key];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    return "";
+  };
+
+  const machineRows = useMemo(() => machines.data.map(item => ({
+    id: item.id,
+    category: readValue(item, ["Kategori", "kategori", "kategoriMesin", "kategori_mesin", "category"]) || "Mesin",
+    type: readValue(item, ["Jenis", "jenis", "jenisMesin", "jenis_mesin", "type"]),
+    name: readValue(item, ["Nama", "nama", "namaMesin", "nama_mesin", "mesin"])
+  })).filter(item => item.type && item.name), [machines.data]);
+
+  const machineCategory = section === "Bengkel" ? "Armada" : "Mesin";
+  const categoryMachines = useMemo(
+    () => machineRows.filter(item => item.category.localeCompare(machineCategory, "id-ID", { sensitivity: "accent" }) === 0),
+    [machineRows, machineCategory]
+  );
+  const machineTypes = useMemo(() => {
+    const list = [...new Set(categoryMachines.map(item => item.type))];
+    if (machineType && !list.includes(machineType)) list.unshift(machineType);
+    return list.sort((a, b) => a.localeCompare(b, "id-ID"));
+  }, [categoryMachines, machineType]);
+
+  const machineNames = useMemo(() => {
+    const list = categoryMachines.filter(item => item.type === machineType).map(item => item.name)
+      .filter((value, index, array) => array.indexOf(value) === index);
+    if (machineName && !list.includes(machineName)) list.unshift(machineName);
+    return list.sort((a, b) => a.localeCompare(b, "id-ID"));
+  }, [categoryMachines, machineType, machineName]);
+
+  const partRows = useMemo(() => partsRemote.data.map((item, index) => ({
+    id: item.id || `part-${index}`,
+    category: Array.isArray(item) ? String(item[0] || "").trim() : readValue(item, ["Kategori", "kategori"]),
+    name: Array.isArray(item) ? String(item[1] || "").trim() : readValue(item, ["Nama", "nama"]),
+    size: Array.isArray(item) ? String(item[2] || "").trim() : readValue(item, ["Ukuran", "ukuran"]),
+    componentType: Array.isArray(item) ? String(item[3] || "").trim() : readValue(item, ["Jenis Komponen", "jenisKomponen", "jenis_komponen"])
+  })).filter(item => item.name && !(
+    item.category.toLocaleLowerCase("id-ID") === "kategori" &&
+    item.name.toLocaleLowerCase("id-ID") === "nama"
+  )), [partsRemote.data]);
+
+  const normalizePartSearch = value => String(value || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim();
+
+  const partMatches = useMemo(() => {
+    const query = normalizePartSearch(partSearch);
+    if (query.length < 2) return [];
+    return partRows
+      .filter(item => normalizePartSearch(
+        `${item.name} ${item.size} ${item.category} ${item.componentType}`
+      ).includes(query))
+      .sort((left, right) => {
+        const leftStarts = normalizePartSearch(left.name).startsWith(query) ? 0 : 1;
+        const rightStarts = normalizePartSearch(right.name).startsWith(query) ? 0 : 1;
+        return leftStarts - rightStarts ||
+          left.name.localeCompare(right.name, "id-ID") ||
+          left.size.localeCompare(right.size, "id-ID");
+      })
+      .slice(0, 10);
+  }, [partRows, partSearch]);
+
+  const partCategories = useMemo(
+    () => [...new Set(partRows.map(item => item.category).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "id-ID")),
+    [partRows]
+  );
+  const partNames = useMemo(
+    () => [...new Set(partRows
+      .filter(item => item.category === selectedPartCategory)
+      .map(item => item.name))]
+      .sort((a, b) => a.localeCompare(b, "id-ID")),
+    [partRows, selectedPartCategory]
+  );
+  const partSizes = useMemo(
+    () => [...new Set(partRows
+      .filter(item => item.category === selectedPartCategory && item.name === selectedPart)
+      .map(item => item.size).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "id-ID")),
+    [partRows, selectedPartCategory, selectedPart]
+  );
+
+  const selectPartResult = item => {
+    setSelectedPartCategory(item.category);
+    setSelectedPart(item.name);
+    setPartSize(item.size || "");
+    if (item.componentType) setWorkComponent(item.componentType);
+    setPartSearch(`${item.name}${item.size ? ` · ${item.size}` : ""}`);
+    setPartSearchOpen(false);
+  };
+
+  const totalHours = useMemo(() => {
+    if (!startDate || !startTime || !endDate || !endTime) return report.durasi || report.totalJam || "0,00";
+    const start = new Date(`${startDate}T${startTime}:00`);
+    const end = new Date(`${endDate}T${endTime}:00`);
+    const hours = (end.getTime() - start.getTime()) / 3600000;
+    return Number.isFinite(hours) && hours >= 0
+      ? hours.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : String(report.durasi || report.totalJam || "0,00");
+  }, [startDate, startTime, endDate, endTime, report.durasi, report.totalJam]);
+
+  const addMasterPart = async data => {
+    if (!isAdmin) throw new Error("Hanya Admin yang dapat menambahkan master part.");
+    const kategori = String(data.kategori || "").trim();
+    const nama = String(data.nama || "").trim();
+    const ukuran = String(data.ukuran || "").trim();
+    const jenisKomponen = String(data.jenisKomponen || "").trim();
+    const satuan = String(data.satuan || "Pcs").trim() || "Pcs";
+    const stokAwal = Number(String(data.stokAwal ?? "0").replace(",", "."));
+    if (!kategori || !nama || !ukuran) throw new Error("Kategori, nama, dan ukuran part wajib diisi.");
+    if (!Number.isFinite(stokAwal) || stokAwal < 0) throw new Error("Stok awal harus berupa angka nol atau lebih.");
+    const stockResult = await apiPost(ENDPOINTS.jobs, {
+      action: "addMasterPart", token: session.token, kategori, nama, ukuran,
+      jenisKomponen, satuan, stokAwal, lokasi: String(data.lokasi || "").trim(),
+      photo: data.photo
+    }, { timeout: 90000 });
+    if (!isSuccess(stockResult)) {
+      throw new Error(stockResult?.message || "Part gagal ditambahkan ke database stok.");
+    }
+    await partsRemote.reload();
+    setSelectedPartCategory(kategori);
+    setSelectedPart(nama);
+    setPartSize(ukuran);
+    if (jenisKomponen) setWorkComponent(jenisKomponen);
+    setPartSearch(`${nama} · ${ukuran}`);
+    setShowAddPart(false);
+    notify?.(stockResult?.message || "Master part berhasil disimpan.");
+  };
+
   const submit = async event => {
     event.preventDefault(); setSaving(true); setError("");
-    try { await onSave(Object.fromEntries(new FormData(event.currentTarget).entries())); }
+    try {
+      const formData = new FormData(event.currentTarget);
+      const data = Object.fromEntries(formData.entries());
+      await onSave(data);
+    }
     catch (err) { setError(err?.message || "Perubahan gagal disimpan."); }
     finally { setSaving(false); }
   };
-  return <div className="modal-overlay" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <form className="modal-card report-admin-editor" onSubmit={submit}>
-      <div className="modal-head"><div><p className="eyebrow">Admin report editor</p><h3>Edit laporan kerja</h3></div><button type="button" onClick={onClose}><X size={18} /></button></div>
-      <div className="form-grid">
-        <Field label="Tanggal"><input name="tanggal" type="date" lang="id-ID" defaultValue={dateValue} required /></Field>
-        <Field label="Bagian"><input name="bagian" defaultValue={report.bagian || ""} required /></Field>
-        <Field label="Nama mesin"><input name="namaMesin" defaultValue={report.mesin || report.namaMesin || ""} required /></Field>
-        <Field label="Durasi (jam)"><input name="totalJam" defaultValue={report.durasi || report.totalJam || ""} /></Field>
-        <Field label="Laporan pekerjaan" wide><textarea name="laporan" defaultValue={report.laporan || ""} required /></Field>
-        <Field label="Waktu mulai"><input name="jamMulai" defaultValue={report.awal || report.jamMulai || ""} /></Field>
-        <Field label="Waktu selesai"><input name="jamSelesai" defaultValue={report.akhir || report.jamSelesai || ""} /></Field>
-        <Field label="Spare part"><input name="sparepart" defaultValue={report.sparepart || ""} /></Field>
-        <Field label="Order"><select name="order" defaultValue={report.order || "Tanpa Order"}><option>Order</option><option>Tanpa Order</option></select></Field>
-        <Field label="Status"><select name="statusOrder" defaultValue={report.statusOrder || "Close"}><option>Open</option><option>Close</option></select></Field>
-        <Field label="Nilai perbaikan"><select name="nilaiPerbaikan" defaultValue={report.nilaiPerbaikan || "Bagus"}><option>Bagus</option><option>Cukup</option><option>Tidak Bagus</option></select></Field>
-        <Field label="Keterangan" wide><textarea name="keterangan" defaultValue={report.keterangan || ""} /></Field>
+
+  return <div className="modal-overlay" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose(); }}>
+    <form className="modal-card report-admin-editor" onSubmit={submit} style={{ width: "min(860px, 96vw)", maxHeight: "90vh", overflowY: "auto" }}>
+      <div className="modal-head">
+        <div><p className="eyebrow">Admin report editor</p><h3>Edit laporan kerja</h3><small>{report.mesin || report.namaMesin} · Baris {report.rowIndex || "-"}</small></div>
+        <button type="button" onClick={onClose} disabled={saving}><X size={18} /></button>
       </div>
-      {error && <div className="remote-error"><AlertTriangle size={16} /><span>{error}</span></div>}
-      <div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Batal</button><button className="primary" disabled={saving}>{saving ? <><span className="spinner" />Menyimpan…</> : <><Check size={16} />Simpan perubahan</>}</button></div>
+
+      <div className="form-grid">
+        <div className="form-section-title wide"><span>01</span><div><b>Identitas pekerjaan</b><small>Mesin dan aset mengikuti master data Android.</small></div></div>
+        <Field label="Tanggal laporan"><input name="tanggal" type="date" lang="id-ID" defaultValue={dateValue} required /></Field>
+        <ChoiceField label="Bagian pekerjaan" wide>
+          <ChoiceCards name="bagian" value={section} required columns={3}
+            options={["Teknik", "Teknik A", "Teknik B", "Umum", "Bengkel", "Konstruksi"]}
+            onChange={value => {
+              setSection(value);
+              setMachineType("");
+              setMachineName("");
+            }} />
+        </ChoiceField>
+        <Field label="Kategori perangkat">
+          <input name="kategoriMesin" value={section ? machineCategory : (report.kategoriMesin || "Mesin")} placeholder="Otomatis dari bagian" readOnly required />
+        </Field>
+        <Field label={`Jenis ${machineCategory.toLowerCase()}`}>
+          <select name="jenis" value={machineType} onChange={event => {
+            setMachineType(event.target.value);
+            setMachineName("");
+          }} disabled={!section || machines.loading} required>
+            <option value="">{machines.loading ? "Memuat master mesin…" : `Pilih jenis ${machineCategory.toLowerCase()}`}</option>
+            {machineTypes.map(value => <option key={value}>{value}</option>)}
+          </select>
+        </Field>
+        <Field label={`Nama ${machineCategory.toLowerCase()}`}>
+          <select name="namaMesin" value={machineName} onChange={event => setMachineName(event.target.value)} disabled={!machineType || machines.loading} required>
+            <option value="">{machineType ? `Pilih nama ${machineCategory.toLowerCase()}` : "Pilih jenis terlebih dahulu"}</option>
+            {machineNames.map(value => <option key={value}>{value}</option>)}
+          </select>
+          {machines.error && <small className="field-help error">Master mesin gagal dimuat: {machines.error}</small>}
+        </Field>
+
+        <div className="form-section-title wide"><span>02</span><div><b>Detail pekerjaan</b><small>Klasifikasi sama dengan formulir Android.</small></div></div>
+        <ChoiceField label="Jenis pekerjaan" wide>
+          <ChoiceCards name="jenisPekerjaan" value={jobType} onChange={setJobType} required columns={4}
+            options={JOB_TYPE_OPTIONS} />
+        </ChoiceField>
+        <ChoiceField label="Jenis komponen" wide>
+          <ChoiceCards name="jenisKomponen" value={workComponent} required columns={3}
+            onChange={setWorkComponent}
+            options={[...new Set([workComponent, "Mekanikal", "Elektrikal", "Konstruksi"].filter(Boolean))]} />
+        </ChoiceField>
+        <Field label="Laporan pekerjaan" wide><textarea name="laporan" defaultValue={report.laporan || ""} placeholder="Uraikan pekerjaan yang dilakukan…" required /></Field>
+
+        <div className="form-section-title wide"><span>03</span><div><b>Waktu dan durasi</b><small>Total jam dihitung otomatis.</small></div></div>
+        <Field label="Tanggal mulai"><input name="tglMulai" type="date" lang="id-ID" value={startDate} onChange={event => { const val = event.target.value; setStartDate(val); if (endDate === startDate || !endDate) setEndDate(val); }} required /></Field>
+        <Field label="Tanggal selesai"><input name="tglSelesai" type="date" lang="id-ID" value={endDate} onChange={event => setEndDate(event.target.value)} required /></Field>
+        <Field label="Jam mulai"><input name="jamMulai" type="time" value={startTime} onChange={event => setStartTime(event.target.value)} required /></Field>
+        <Field label="Jam selesai"><input name="jamSelesai" type="time" value={endTime} onChange={event => setEndTime(event.target.value)} required /></Field>
+        <Field label="Total durasi">
+          <div className="calculated-field"><Clock3 size={17} /><b>{totalHours} jam</b></div>
+          <input name="totalJam" type="hidden" value={totalHours} />
+        </Field>
+        <ChoiceField label="Definisi pekerjaan" wide>
+          <ChoiceCards name="definisi" value={definisi} onChange={setDefinisi} columns={4}
+            options={[{ value: "", label: "Tidak ada" }, "Tunggu Part", "Overhaul", "Kirim Luar"]} />
+        </ChoiceField>
+
+        <div className="form-section-title wide"><span>04</span><div><b>Material dan hasil</b><small>Cari nama atau kode part terlebih dahulu agar tidak membuat master ganda.</small></div></div>
+        <Field label="Cari nama / kode spare part" wide>
+          <div className="part-lookup">
+            <Search size={17} />
+            <input
+              type="search"
+              value={partSearch}
+              onFocus={() => setPartSearchOpen(true)}
+              onBlur={() => setTimeout(() => setPartSearchOpen(false), 150)}
+              onChange={event => {
+                setPartSearch(event.target.value);
+                setPartSearchOpen(true);
+              }}
+              placeholder="Ketik minimal 2 huruf, contoh: carbon brush atau 20 x 32"
+              autoComplete="off"
+            />
+            {partSearch && <button type="button" className="part-lookup-clear" onClick={() => {
+              setPartSearch("");
+              setPartSearchOpen(false);
+            }} aria-label="Hapus pencarian"><X size={15} /></button>}
+            {partSearchOpen && normalizePartSearch(partSearch).length >= 2 &&
+              <div className="part-lookup-results">
+                {partsRemote.loading
+                  ? <div className="part-lookup-state"><span className="spinner dark" />Mencari master part…</div>
+                  : partMatches.length
+                    ? <>
+                      <small>{partMatches.length} hasil terdekat</small>
+                      {partMatches.map((item, index) => <button
+                        type="button"
+                        key={`${item.id || item.name}-${item.size}-${index}`}
+                        onMouseDown={event => event.preventDefault()}
+                        onClick={() => selectPartResult(item)}
+                      >
+                        <span><b>{item.name}</b><em>{item.size || "Tanpa ukuran"}</em></span>
+                        <span><i>{item.category || "Tanpa kategori"}</i><i>{item.componentType || "Jenis belum diisi"}</i></span>
+                        <Check size={15} />
+                      </button>)}
+                    </>
+                    : <div className="part-lookup-empty">
+                      <b>Part tidak ditemukan</b>
+                      <span>Periksa ejaan atau cari menggunakan ukuran/kode.</span>
+                      {isAdmin
+                        ? <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => {
+                          setPartSearchOpen(false);
+                          setShowAddPart(true);
+                        }}><Plus size={14} /> Buat master part baru</button>
+                        : <small>Hubungi Admin jika part memang belum terdaftar.</small>}
+                    </div>
+                }
+              </div>}
+          </div>
+        </Field>
+        <Field label="Kategori part">
+          <select value={selectedPartCategory} onChange={event => {
+            const value = event.target.value;
+            setSelectedPartCategory(value);
+            setSelectedPart(value === "Tidak Pakai" ? "Tidak Pakai" : "");
+            setPartSize("");
+            setPartSearch("");
+          }} disabled={partsRemote.loading} required>
+            <option>Tidak Pakai</option>
+            {partCategories.map(value => <option key={value}>{value}</option>)}
+          </select>
+          <input name="partKategori" type="hidden" value={selectedPartCategory === "Tidak Pakai" ? "" : selectedPartCategory} />
+          {partsRemote.error && <small className="field-help error">Master part gagal dimuat: {partsRemote.error}</small>}
+          {isAdmin && <button type="button" className="field-add-button" onClick={() => setShowAddPart(true)}><Search size={14} /> Cari ulang atau tambahkan master</button>}
+        </Field>
+        <Field label="Spare part dipakai">
+          <select name="sparepart" value={selectedPart} onChange={event => {
+            const value = event.target.value;
+            setSelectedPart(value);
+            setPartSize("");
+            setPartSearch("");
+            const matched = partRows.find(item =>
+              item.category === selectedPartCategory && item.name === value
+            );
+            if (matched?.componentType) setWorkComponent(matched.componentType);
+          }} disabled={partsRemote.loading} required>
+            <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}</option>
+            {selectedPartCategory === "Tidak Pakai" && <option value="Tidak Pakai">Tidak Pakai</option>}
+            {partNames.map(value => <option key={value}>{value}</option>)}
+          </select>
+        </Field>
+        <Field label="Kode / jenis / ukuran part">
+          <select name="ukuranPart" value={partSize} onChange={event => {
+            const value = event.target.value;
+            setPartSize(value);
+            const matched = partRows.find(item =>
+              item.category === selectedPartCategory && item.name === selectedPart && item.size === value
+            );
+            if (matched?.componentType) setWorkComponent(matched.componentType);
+          }} disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart} required={selectedPartCategory !== "Tidak Pakai" && partSizes.length > 0}>
+            <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : !selectedPart ? "Pilih spare part terlebih dahulu" : partSizes.length ? "Pilih ukuran part" : "Tidak ada ukuran pada master"}</option>
+            {partSizes.map(value => <option key={value}>{value}</option>)}
+          </select>
+        </Field>
+        <ChoiceField label="Nilai perbaikan">
+          <ChoiceCards name="nilaiPerbaikan" value={nilaiPerbaikan} onChange={setNilaiPerbaikan} required columns={3}
+            options={["Bagus", "Cukup", "Tidak Bagus"]} />
+        </ChoiceField>
+
+        <div className="form-section-title wide"><span>05</span><div><b>Status dan order</b><small>Status akhir laporan serta kebutuhan pemesanan.</small></div></div>
+        <ChoiceField label="Order spare part">
+          <ChoiceCards name="order" value={order} onChange={setOrder} columns={2}
+            options={[{ value: "Tanpa Order", label: "Tanpa Order" }, { value: "Order", label: "Pakai Order" }]} />
+        </ChoiceField>
+        <ChoiceField label="Status pekerjaan">
+          <ChoiceCards name="statusOrder" value={statusOrder} onChange={setStatusOrder} required columns={2}
+            options={[{ value: "Open", label: "Masih open" }, { value: "Close", label: "Selesai / close" }]} />
+        </ChoiceField>
+        <Field label="Keterangan" wide><textarea name="keterangan" defaultValue={report.keterangan || ""} placeholder="Catatan tambahan perbaikan…" /></Field>
+      </div>
+
+      {error && <div className="remote-error wide" style={{ marginTop: 16 }}><AlertTriangle size={16} /><span>{error}</span></div>}
+      <div className="modal-actions wide" style={{ marginTop: 20 }}>
+        <button type="button" className="secondary" disabled={saving} onClick={onClose}>Batal</button>
+        <button className="primary" disabled={saving}>{saving ? <><span className="spinner" />Menyimpan…</> : <><Check size={16} />Simpan perubahan</>}</button>
+      </div>
+      {showAddPart && <AddMasterPartModal notify={notify} onClose={() => setShowAddPart(false)} onSave={addMasterPart} session={session} />}
     </form>
   </div>;
 }
@@ -4732,20 +5334,34 @@ function JobForm({ notify, go, session }) {
     const offset = date.getTimezoneOffset() * 60000;
     return new Date(date.getTime() - offset).toISOString().slice(0, 10);
   }, []);
+
+  const [reportDate, setReportDate] = useState(today);
   const [section, setSection] = useState("");
   const [machineType, setMachineType] = useState("");
   const [machineName, setMachineName] = useState("");
+  const [jobType, setJobType] = useState("Perbaikan");
+  const [workComponent, setWorkComponent] = useState("");
+  const [laporan, setLaporan] = useState("");
   const [startDate, setStartDate] = useState(today);
   const [startTime, setStartTime] = useState("08:00");
   const [endDate, setEndDate] = useState(today);
   const [endTime, setEndTime] = useState("09:00");
+  const [definisi, setDefinisi] = useState("");
   const [selectedPartCategory, setSelectedPartCategory] = useState("Tidak Pakai");
   const [selectedPart, setSelectedPart] = useState("Tidak Pakai");
   const [partSize, setPartSize] = useState("");
   const [partSearch, setPartSearch] = useState("");
   const [partSearchOpen, setPartSearchOpen] = useState(false);
-  const [workComponent, setWorkComponent] = useState("");
+  const [nilaiPerbaikan, setNilaiPerbaikan] = useState("Bagus");
+  const [order, setOrder] = useState("Tanpa Order");
+  const [statusOrder, setStatusOrder] = useState("Close");
+  const [keterangan, setKeterangan] = useState("");
   const [showAddPart, setShowAddPart] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [savedCount, setSavedCount] = useState(0);
+  const [savedHistory, setSavedHistory] = useState([]);
+  const formRef = useRef(null);
   const isAdmin = String(session?.role || "").toLowerCase() === "admin";
 
   const readValue = (item, keys) => {
@@ -4880,211 +5496,680 @@ function JobForm({ notify, go, session }) {
     notify(stockResult?.message || "Master part berhasil disimpan ke Neon.");
   };
 
-  const submit = async (data) => {
-    const mappedSection = data.bagian === "Teknik A"
-      ? "Tek. Shift A"
-      : data.bagian === "Teknik B"
-        ? "Tek. Shift B"
-        : data.bagian;
-    const payload = {
-      token: session?.token || "",
-      tanggal: toIdDate(data.tanggal), bagian: mappedSection, kategoriMesin: data.kategoriMesin,
-      jenis: data.jenis, namaMesin: data.namaMesin, jenisPekerjaan: data.jenisPekerjaan,
-      laporan: data.laporan, jenisKomponen: data.jenisKomponen,
-      jamMulai: `${toIdDate(data.tglMulai)} ${data.jamMulai}`, jamSelesai: `${toIdDate(data.tglSelesai)} ${data.jamSelesai}`,
-      totalJam: data.totalJam, definisi: data.definisi || "", sparepart: data.sparepart,
-      ukuranPart: data.ukuranPart || "", order: data.order || "Tanpa Order", statusOrder: data.statusOrder || "",
-      nilaiPerbaikan: data.nilaiPerbaikan, keterangan: data.keterangan,
-      isNewMachine: false, isNewPart: false, partKategori: data.partKategori || "",
-      partNama: data.sparepart, partUkuran: data.ukuranPart || ""
-    };
-    const result = await apiPost(ENDPOINTS.jobs, payload);
-    if (!isSuccess(result)) throw new Error(result.message || "Laporan gagal disimpan.");
-    notify("Laporan kerja berhasil disimpan dan tersinkron.");
-    go("jobs");
-  };
-  return <><FormPanel title="Dokumentasi pekerjaan" onSubmit={submit} submit="Simpan laporan">
-    <div className="form-section-title wide"><span>01</span><div><b>Identitas pekerjaan</b><small>Mesin dan aset mengikuti master data Android.</small></div></div>
-    <Field label="Tanggal laporan"><input name="tanggal" type="date" lang="id-ID" defaultValue={today} required /></Field>
-    <ChoiceField label="Bagian pekerjaan" wide>
-      <ChoiceCards name="bagian" value={section} required columns={3}
-        options={["Teknik", "Teknik A", "Teknik B", "Umum", "Bengkel", "Konstruksi"]}
-        onChange={value => {
-          setSection(value);
-          setMachineType("");
-          setMachineName("");
-        }} />
-    </ChoiceField>
-    <Field label="Kategori perangkat">
-      <input name="kategoriMesin" value={section ? machineCategory : ""} placeholder="Otomatis dari bagian" readOnly required />
-    </Field>
-    <Field label={`Jenis ${machineCategory.toLowerCase()}`}>
-      <select name="jenis" value={machineType} onChange={event => {
-        setMachineType(event.target.value);
+  const handleSave = async (keepGoing = false) => {
+    setError("");
+    if (!reportDate) {
+      setError("Tanggal laporan wajib diisi.");
+      return;
+    }
+    if (!section) {
+      setError("Bagian pekerjaan wajib dipilih.");
+      return;
+    }
+    if (!machineType || !machineName) {
+      setError(`Jenis dan nama ${machineCategory.toLowerCase()} wajib dipilih.`);
+      return;
+    }
+    if (!jobType) {
+      setError("Jenis pekerjaan wajib dipilih.");
+      return;
+    }
+    if (!workComponent) {
+      setError("Jenis komponen wajib dipilih.");
+      return;
+    }
+    if (!laporan.trim()) {
+      setError("Uraian laporan pekerjaan wajib diisi.");
+      return;
+    }
+    if (!startDate || !startTime || !endDate || !endTime) {
+      setError("Waktu mulai dan selesai wajib diisi lengkap.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const mappedSection = section === "Teknik A"
+        ? "Tek. Shift A"
+        : section === "Teknik B"
+          ? "Tek. Shift B"
+          : section;
+
+      const payload = {
+        token: session?.token || "",
+        tanggal: toIdDate(reportDate),
+        bagian: mappedSection,
+        kategoriMesin: machineCategory,
+        jenis: machineType,
+        namaMesin: machineName,
+        jenisPekerjaan: jobType,
+        laporan: laporan.trim(),
+        jenisKomponen: workComponent,
+        jamMulai: `${toIdDate(startDate)} ${startTime}`,
+        jamSelesai: `${toIdDate(endDate)} ${endTime}`,
+        totalJam: totalHours,
+        definisi: definisi || "",
+        sparepart: selectedPart,
+        ukuranPart: partSize || "",
+        order: order || "Tanpa Order",
+        statusOrder: statusOrder || "Close",
+        nilaiPerbaikan: nilaiPerbaikan || "Bagus",
+        keterangan: keterangan.trim(),
+        isNewMachine: false,
+        isNewPart: false,
+        partKategori: selectedPartCategory === "Tidak Pakai" ? "" : selectedPartCategory,
+        partNama: selectedPart,
+        partUkuran: partSize || ""
+      };
+
+      const result = await apiPost(ENDPOINTS.jobs, payload);
+      if (!isSuccess(result)) throw new Error(result.message || "Laporan gagal disimpan.");
+
+      if (reportDate || startDate) {
+        const dateVal = startDate || reportDate;
+        const matchIso = String(dateVal).match(/^(\d{4})-(\d{2})/);
+        const matchId = String(dateVal).match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+        const targetYear = matchIso ? matchIso[1] : (matchId ? matchId[3] : "");
+        const targetMonth = matchIso ? matchIso[2] : (matchId ? matchId[2].padStart(2, "0") : "");
+        if (targetYear && targetMonth) {
+          try {
+            const currentFilters = JSON.parse(sessionStorage.getItem("siteki-jobs-filters") || "{}");
+            sessionStorage.setItem("siteki-jobs-filters", JSON.stringify({
+              ...currentFilters,
+              year: targetYear,
+              month: targetMonth
+            }));
+          } catch { }
+        }
+      }
+
+      const nextCount = savedCount + 1;
+      setSavedCount(nextCount);
+      setSavedHistory(prev => [
+        {
+          id: Date.now(),
+          number: nextCount,
+          machine: machineName,
+          jobType,
+          laporan: laporan.trim(),
+          hours: totalHours,
+          time: `${startTime} - ${endTime}`
+        },
+        ...prev
+      ]);
+
+      if (keepGoing) {
+        notify(`Laporan #${nextCount} (${machineName}) tersimpan! Siap untuk laporan berikutnya.`);
+
+        const nextStartTime = endTime;
+        let nextEndTime = "17:00";
+        try {
+          const [h, m] = endTime.split(":").map(Number);
+          const nextH = Math.min(23, h + 1);
+          nextEndTime = `${String(nextH).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        } catch { }
+
+        setStartTime(nextStartTime);
+        setEndTime(nextEndTime);
+        setStartDate(endDate);
+
         setMachineName("");
-      }} disabled={!section || machines.loading} required>
-        <option value="">{machines.loading ? "Memuat master mesin…" : `Pilih jenis ${machineCategory.toLowerCase()}`}</option>
-        {machineTypes.map(value => <option key={value}>{value}</option>)}
-      </select>
-    </Field>
-    <Field label={`Nama ${machineCategory.toLowerCase()}`}>
-      <select name="namaMesin" value={machineName} onChange={event => setMachineName(event.target.value)} disabled={!machineType || machines.loading} required>
-        <option value="">{machineType ? `Pilih nama ${machineCategory.toLowerCase()}` : "Pilih jenis terlebih dahulu"}</option>
-        {machineNames.map(value => <option key={value}>{value}</option>)}
-      </select>
-      {machines.error && <small className="field-help error">Master mesin gagal dimuat: {machines.error}</small>}
-    </Field>
+        setLaporan("");
+        setDefinisi("");
+        setSelectedPartCategory("Tidak Pakai");
+        setSelectedPart("Tidak Pakai");
+        setPartSize("");
+        setPartSearch("");
+        setKeterangan("");
 
-    <div className="form-section-title wide"><span>02</span><div><b>Detail pekerjaan</b><small>Klasifikasi sama dengan formulir Android.</small></div></div>
-    <ChoiceField label="Jenis pekerjaan" wide>
-      <ChoiceCards name="jenisPekerjaan" required columns={3}
-        options={["Perbaikan", "Pemeriksaan", "Pemasangan", "Pemindahan", "Pembuatan", "Setting"]} />
-    </ChoiceField>
-    <ChoiceField label="Jenis komponen" wide>
-      <ChoiceCards name="jenisKomponen" value={workComponent} required columns={3}
-        onChange={setWorkComponent}
-        options={[...new Set([workComponent, "Mekanikal", "Elektrikal", "Konstruksi"].filter(Boolean))]} />
-    </ChoiceField>
-    <Field label="Laporan pekerjaan" wide><textarea name="laporan" placeholder="Uraikan pekerjaan yang dilakukan…" required /></Field>
+        if (formRef.current) {
+          formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      } else {
+        notify(`Semua laporan kerja (${nextCount} laporan) berhasil disimpan.`);
+        go("jobs");
+      }
+    } catch (err) {
+      setError(err?.message || "Gagal menyimpan laporan kerja.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
-    <div className="form-section-title wide"><span>03</span><div><b>Waktu dan durasi</b><small>Total jam dihitung otomatis.</small></div></div>
-    <Field label="Tanggal mulai"><input name="tglMulai" type="date" lang="id-ID" value={startDate} onChange={event => setStartDate(event.target.value)} required /></Field>
-    <Field label="Jam mulai"><input name="jamMulai" type="time" value={startTime} onChange={event => setStartTime(event.target.value)} required /></Field>
-    <Field label="Tanggal selesai"><input name="tglSelesai" type="date" lang="id-ID" value={endDate} onChange={event => setEndDate(event.target.value)} required /></Field>
-    <Field label="Jam selesai"><input name="jamSelesai" type="time" value={endTime} onChange={event => setEndTime(event.target.value)} required /></Field>
-    <Field label="Total durasi">
-      <div className="calculated-field"><Clock3 size={17} /><b>{totalHours} jam</b></div>
-      <input name="totalJam" type="hidden" value={totalHours} />
-    </Field>
-    <ChoiceField label="Definisi pekerjaan" wide>
-      <ChoiceCards name="definisi" defaultValue="" columns={4}
-        options={[{ value: "", label: "Tidak ada" }, "Tunggu Part", "Overhaul", "Kirim Luar"]} />
-    </ChoiceField>
-
-    <div className="form-section-title wide"><span>04</span><div><b>Material dan hasil</b><small>Cari nama atau kode part terlebih dahulu agar tidak membuat master ganda.</small></div></div>
-    <Field label="Cari nama / kode spare part" wide>
-      <div className="part-lookup">
-        <Search size={17} />
-        <input
-          type="search"
-          value={partSearch}
-          onFocus={() => setPartSearchOpen(true)}
-          onBlur={() => setTimeout(() => setPartSearchOpen(false), 150)}
-          onChange={event => {
-            setPartSearch(event.target.value);
-            setPartSearchOpen(true);
-          }}
-          placeholder="Ketik minimal 2 huruf, contoh: carbon brush atau 20 x 32"
-          autoComplete="off"
-        />
-        {partSearch && <button type="button" className="part-lookup-clear" onClick={() => {
-          setPartSearch("");
-          setPartSearchOpen(false);
-        }} aria-label="Hapus pencarian"><X size={15} /></button>}
-        {partSearchOpen && normalizePartSearch(partSearch).length >= 2 &&
-          <div className="part-lookup-results">
-            {partsRemote.loading
-              ? <div className="part-lookup-state"><span className="spinner dark" />Mencari master part…</div>
-              : partMatches.length
-                ? <>
-                  <small>{partMatches.length} hasil terdekat</small>
-                  {partMatches.map((item, index) => <button
-                    type="button"
-                    key={`${item.id || item.name}-${item.size}-${index}`}
-                    onMouseDown={event => event.preventDefault()}
-                    onClick={() => selectPartResult(item)}
-                  >
-                    <span><b>{item.name}</b><em>{item.size || "Tanpa ukuran"}</em></span>
-                    <span><i>{item.category || "Tanpa kategori"}</i><i>{item.componentType || "Jenis belum diisi"}</i></span>
-                    <Check size={15} />
-                  </button>)}
-                </>
-                : <div className="part-lookup-empty">
-                  <b>Part tidak ditemukan</b>
-                  <span>Periksa ejaan atau cari menggunakan ukuran/kode.</span>
-                  {isAdmin
-                    ? <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => {
-                      setPartSearchOpen(false);
-                      setShowAddPart(true);
-                    }}><Plus size={14} /> Buat master part baru</button>
-                    : <small>Hubungi Admin jika part memang belum terdaftar.</small>}
-                </div>
-            }
-          </div>}
+  return (
+    <>
+      <div className="job-multi-entry-banner">
+        <div className="banner-info">
+          <FilePlus2 size={22} />
+          <div>
+            <b>Mode Input Cepat Laporan (Multi-Input)</b>
+            <p style={{ margin: "2px 0 0", color: "var(--muted)", fontSize: "11px" }}>
+              Tanggal &amp; Bagian dipertahankan otomatis. Jam mulai berikutnya langsung menyambung dari jam selesai sebelumnya.
+            </p>
+          </div>
+        </div>
+        {savedCount > 0 && (
+          <div className="saved-badge">
+            <CheckCircle2 size={14} />
+            <span>{savedCount} laporan tersimpan di sesi ini</span>
+          </div>
+        )}
       </div>
-      <small className="field-help">Memilih hasil pencarian akan mengisi kategori, nama, ukuran, dan jenis komponen secara otomatis.</small>
-    </Field>
-    <Field label="Kategori part">
-      <select value={selectedPartCategory} onChange={event => {
-        const value = event.target.value;
-        setSelectedPartCategory(value);
-        setSelectedPart(value === "Tidak Pakai" ? "Tidak Pakai" : "");
-        setPartSize("");
-        setPartSearch("");
-      }} disabled={partsRemote.loading} required>
-        <option>Tidak Pakai</option>
-        {partCategories.map(value => <option key={value}>{value}</option>)}
-      </select>
-      <input name="partKategori" type="hidden" value={selectedPartCategory === "Tidak Pakai" ? "" : selectedPartCategory} />
-      {partsRemote.error && <small className="field-help error">Master part gagal dimuat: {partsRemote.error}</small>}
-      {isAdmin && <button type="button" className="field-add-button" onClick={() => setShowAddPart(true)}><Search size={14} /> Cari ulang atau tambahkan master</button>}
-    </Field>
-    <Field label="Spare part dipakai">
-      <select name="sparepart" value={selectedPart} onChange={event => {
-        const value = event.target.value;
-        setSelectedPart(value);
-        setPartSize("");
-        setPartSearch("");
-        const matched = partRows.find(item =>
-          item.category === selectedPartCategory && item.name === value
-        );
-        if (matched?.componentType) setWorkComponent(matched.componentType);
-      }} disabled={partsRemote.loading} required>
-        <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}</option>
-        {selectedPartCategory === "Tidak Pakai" && <option value="Tidak Pakai">Tidak Pakai</option>}
-        {partNames.map(value => <option key={value}>{value}</option>)}
-      </select>
-    </Field>
-    <Field label="Kode / jenis / ukuran part">
-      <select name="ukuranPart" value={partSize} onChange={event => {
-        const value = event.target.value;
-        setPartSize(value);
-        const matched = partRows.find(item =>
-          item.category === selectedPartCategory && item.name === selectedPart && item.size === value
-        );
-        if (matched?.componentType) setWorkComponent(matched.componentType);
-      }} disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart} required={selectedPartCategory !== "Tidak Pakai" && partSizes.length > 0}>
-        <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : !selectedPart ? "Pilih spare part terlebih dahulu" : partSizes.length ? "Pilih ukuran part" : "Tidak ada ukuran pada master"}</option>
-        {partSizes.map(value => <option key={value}>{value}</option>)}
-      </select>
-    </Field>
-    <ChoiceField label="Nilai perbaikan">
-      <ChoiceCards name="nilaiPerbaikan" required columns={3}
-        options={["Bagus", "Cukup", "Tidak Bagus"]} />
-    </ChoiceField>
 
-    <div className="form-section-title wide"><span>05</span><div><b>Status dan order</b><small>Status akhir laporan serta kebutuhan pemesanan.</small></div></div>
-    <ChoiceField label="Order spare part">
-      <ChoiceCards name="order" defaultValue="Tanpa Order" columns={2}
-        options={[{ value: "Tanpa Order", label: "Tanpa Order" }, { value: "Order", label: "Pakai Order" }]} />
-    </ChoiceField>
-    <ChoiceField label="Status pekerjaan">
-      <ChoiceCards name="statusOrder" required columns={2}
-        options={[{ value: "Open", label: "Masih open" }, { value: "Close", label: "Selesai / close" }]} />
-    </ChoiceField>
-    <Field label="Keterangan" wide><textarea name="keterangan" placeholder="Catatan tambahan…" /></Field>
-  </FormPanel>
-    {showAddPart && <AddMasterPartModal
-      existingCategories={partCategories}
-      existingParts={partRows}
-      initialQuery={partSearch}
-      onClose={() => setShowAddPart(false)}
-      onSelectExisting={item => {
-        selectPartResult(item);
-        setShowAddPart(false);
-      }}
-      onSave={addMasterPart}
-    />}</>;
+      <form ref={formRef} className="panel form-panel" onSubmit={(e) => { e.preventDefault(); handleSave(true); }}>
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Dokumentasi pekerjaan</p>
+            <h3>Formulir Laporan Kerja {savedCount > 0 ? `(Laporan #${savedCount + 1})` : ""}</h3>
+          </div>
+          <button type="button" className="secondary small" onClick={() => go("jobs")} disabled={saving}>
+            <ArrowLeft size={15} /> Kembali ke Riwayat
+          </button>
+        </div>
+
+        <div className="form-grid">
+          {/* 01 IDENTITAS PEKERJAAN */}
+          <div className="form-section-title wide">
+            <span>01</span>
+            <div>
+              <b>Identitas pekerjaan</b>
+              <small>Tanggal dan bagian otomatis tetap sama untuk laporan beruntun.</small>
+            </div>
+          </div>
+
+          <Field label="Tanggal laporan">
+            <input
+              name="tanggal"
+              type="date"
+              lang="id-ID"
+              value={reportDate}
+              onChange={e => {
+                const val = e.target.value;
+                setReportDate(val);
+                setStartDate(val);
+                setEndDate(val);
+              }}
+              required
+            />
+          </Field>
+
+          <ChoiceField label="Bagian pekerjaan" wide>
+            <ChoiceCards
+              name="bagian"
+              value={section}
+              required
+              columns={3}
+              options={["Teknik", "Teknik A", "Teknik B", "Umum", "Bengkel", "Konstruksi"]}
+              onChange={value => {
+                setSection(value);
+                setMachineType("");
+                setMachineName("");
+              }}
+            />
+          </ChoiceField>
+
+          <Field label="Kategori perangkat">
+            <input
+              name="kategoriMesin"
+              value={section ? machineCategory : ""}
+              placeholder="Otomatis dari bagian"
+              readOnly
+              required
+            />
+          </Field>
+
+          <Field label={`Jenis ${machineCategory.toLowerCase()}`}>
+            <select
+              name="jenis"
+              value={machineType}
+              onChange={event => {
+                setMachineType(event.target.value);
+                setMachineName("");
+              }}
+              disabled={!section || machines.loading}
+              required
+            >
+              <option value="">{machines.loading ? "Memuat master mesin…" : `Pilih jenis ${machineCategory.toLowerCase()}`}</option>
+              {machineTypes.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </Field>
+
+          <Field label={`Nama ${machineCategory.toLowerCase()}`}>
+            <select
+              name="namaMesin"
+              value={machineName}
+              onChange={event => setMachineName(event.target.value)}
+              disabled={!machineType || machines.loading}
+              required
+            >
+              <option value="">{machineType ? `Pilih nama ${machineCategory.toLowerCase()}` : "Pilih jenis terlebih dahulu"}</option>
+              {machineNames.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+            {machines.error && <small className="field-help error">Master mesin gagal dimuat: {machines.error}</small>}
+          </Field>
+
+          {/* 02 DETAIL PEKERJAAN */}
+          <div className="form-section-title wide">
+            <span>02</span>
+            <div>
+              <b>Detail pekerjaan</b>
+              <small>Klasifikasi sama dengan formulir Android.</small>
+            </div>
+          </div>
+
+          <ChoiceField label="Jenis pekerjaan" wide>
+            <ChoiceCards
+              name="jenisPekerjaan"
+              value={jobType}
+              onChange={setJobType}
+              required
+              columns={4}
+              options={JOB_TYPE_OPTIONS}
+            />
+          </ChoiceField>
+
+          <ChoiceField label="Jenis komponen" wide>
+            <ChoiceCards
+              name="jenisKomponen"
+              value={workComponent}
+              required
+              columns={3}
+              onChange={setWorkComponent}
+              options={[...new Set([workComponent, "Mekanikal", "Elektrikal", "Konstruksi"].filter(Boolean))]}
+            />
+          </ChoiceField>
+
+          <Field label="Laporan pekerjaan" wide>
+            <textarea
+              name="laporan"
+              value={laporan}
+              onChange={e => setLaporan(e.target.value)}
+              placeholder="Uraikan pekerjaan yang dilakukan…"
+              rows={3}
+              required
+            />
+          </Field>
+
+          {/* 03 WAKTU DAN DURASI */}
+          <div className="form-section-title wide">
+            <span>03</span>
+            <div>
+              <b>Waktu dan durasi</b>
+              <small>Jam mulai otomatis menyambung dari jam selesai laporan sebelumnya.</small>
+            </div>
+          </div>
+
+          <Field label="Tanggal mulai">
+            <input
+              name="tglMulai"
+              type="date"
+              lang="id-ID"
+              value={startDate}
+              onChange={event => {
+                const val = event.target.value;
+                setStartDate(val);
+                if (endDate === startDate || !endDate) setEndDate(val);
+              }}
+              required
+            />
+          </Field>
+          <Field label="Tanggal selesai">
+            <input
+              name="tglSelesai"
+              type="date"
+              lang="id-ID"
+              value={endDate}
+              onChange={event => setEndDate(event.target.value)}
+              required
+            />
+          </Field>
+          <Field label="Jam mulai">
+            <input
+              name="jamMulai"
+              type="time"
+              value={startTime}
+              onChange={event => setStartTime(event.target.value)}
+              required
+            />
+          </Field>
+          <Field label="Jam selesai">
+            <input
+              name="jamSelesai"
+              type="time"
+              value={endTime}
+              onChange={event => setEndTime(event.target.value)}
+              required
+            />
+          </Field>
+          <Field label="Total durasi">
+            <div className="calculated-field">
+              <Clock3 size={17} />
+              <b>{totalHours} jam</b>
+            </div>
+          </Field>
+
+          <ChoiceField label="Definisi pekerjaan" wide>
+            <ChoiceCards
+              name="definisi"
+              value={definisi}
+              onChange={setDefinisi}
+              columns={4}
+              options={[{ value: "", label: "Tidak ada" }, "Tunggu Part", "Overhaul", "Kirim Luar"]}
+            />
+          </ChoiceField>
+
+          {/* 04 MATERIAL DAN HASIL */}
+          <div className="form-section-title wide">
+            <span>04</span>
+            <div>
+              <b>Material dan hasil</b>
+              <small>Cari nama atau kode part terlebih dahulu agar tidak membuat master ganda.</small>
+            </div>
+          </div>
+
+          <Field label="Cari nama / kode spare part" wide>
+            <div className="part-lookup">
+              <Search size={17} />
+              <input
+                type="search"
+                value={partSearch}
+                onFocus={() => setPartSearchOpen(true)}
+                onBlur={() => setTimeout(() => setPartSearchOpen(false), 150)}
+                onChange={event => {
+                  setPartSearch(event.target.value);
+                  setPartSearchOpen(true);
+                }}
+                placeholder="Ketik minimal 2 huruf, contoh: carbon brush atau 20 x 32"
+                autoComplete="off"
+              />
+              {partSearch && (
+                <button
+                  type="button"
+                  className="part-lookup-clear"
+                  onClick={() => {
+                    setPartSearch("");
+                    setPartSearchOpen(false);
+                  }}
+                  aria-label="Hapus pencarian"
+                >
+                  <X size={15} />
+                </button>
+              )}
+              {partSearchOpen && normalizePartSearch(partSearch).length >= 2 && (
+                <div className="part-lookup-results">
+                  {partsRemote.loading ? (
+                    <div className="part-lookup-state">
+                      <span className="spinner dark" />Mencari master part…
+                    </div>
+                  ) : partMatches.length ? (
+                    <>
+                      <small>{partMatches.length} hasil terdekat</small>
+                      {partMatches.map((item, index) => (
+                        <button
+                          type="button"
+                          key={`${item.id || item.name}-${item.size}-${index}`}
+                          onMouseDown={event => event.preventDefault()}
+                          onClick={() => selectPartResult(item)}
+                        >
+                          <span>
+                            <b>{item.name}</b>
+                            <em>{item.size || "Tanpa ukuran"}</em>
+                          </span>
+                          <span>
+                            <i>{item.category || "Tanpa kategori"}</i>
+                            <i>{item.componentType || "Jenis belum diisi"}</i>
+                          </span>
+                          <Check size={15} />
+                        </button>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="part-lookup-empty">
+                      <b>Part tidak ditemukan</b>
+                      <span>Periksa ejaan atau cari menggunakan ukuran/kode.</span>
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onMouseDown={event => event.preventDefault()}
+                          onClick={() => {
+                            setPartSearchOpen(false);
+                            setShowAddPart(true);
+                          }}
+                        >
+                          <Plus size={14} /> Buat master part baru
+                        </button>
+                      ) : (
+                        <small>Hubungi Admin jika part memang belum terdaftar.</small>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <small className="field-help">
+              Memilih hasil pencarian akan mengisi kategori, nama, ukuran, dan jenis komponen secara otomatis.
+            </small>
+          </Field>
+
+          <Field label="Kategori part">
+            <select
+              value={selectedPartCategory}
+              onChange={event => {
+                const value = event.target.value;
+                setSelectedPartCategory(value);
+                setSelectedPart(value === "Tidak Pakai" ? "Tidak Pakai" : "");
+                setPartSize("");
+                setPartSearch("");
+              }}
+              disabled={partsRemote.loading}
+              required
+            >
+              <option value="Tidak Pakai">Tidak Pakai</option>
+              {partCategories.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+            {partsRemote.error && <small className="field-help error">Master part gagal dimuat: {partsRemote.error}</small>}
+            {isAdmin && (
+              <button
+                type="button"
+                className="field-add-button"
+                onClick={() => setShowAddPart(true)}
+              >
+                <Search size={14} /> Cari ulang atau tambahkan master
+              </button>
+            )}
+          </Field>
+
+          <Field label="Spare part dipakai">
+            <select
+              name="sparepart"
+              value={selectedPart}
+              onChange={event => {
+                const value = event.target.value;
+                setSelectedPart(value);
+                setPartSize("");
+                setPartSearch("");
+                const matched = partRows.find(item =>
+                  item.category === selectedPartCategory && item.name === value
+                );
+                if (matched?.componentType) setWorkComponent(matched.componentType);
+              }}
+              disabled={partsRemote.loading}
+              required
+            >
+              <option value="">{selectedPartCategory === "Tidak Pakai" ? "Tidak menggunakan part" : "Pilih spare part"}</option>
+              {selectedPartCategory === "Tidak Pakai" && <option value="Tidak Pakai">Tidak Pakai</option>}
+              {partNames.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Kode / jenis / ukuran part">
+            <select
+              name="ukuranPart"
+              value={partSize}
+              onChange={event => {
+                const value = event.target.value;
+                setPartSize(value);
+                const matched = partRows.find(item =>
+                  item.category === selectedPartCategory && item.name === selectedPart && item.size === value
+                );
+                if (matched?.componentType) setWorkComponent(matched.componentType);
+              }}
+              disabled={selectedPartCategory === "Tidak Pakai" || !selectedPart}
+              required={selectedPartCategory !== "Tidak Pakai" && partSizes.length > 0}
+            >
+              <option value="">
+                {selectedPartCategory === "Tidak Pakai"
+                  ? "Tidak menggunakan part"
+                  : !selectedPart
+                    ? "Pilih spare part terlebih dahulu"
+                    : partSizes.length
+                      ? "Pilih ukuran part"
+                      : "Tidak ada ukuran pada master"}
+              </option>
+              {partSizes.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </Field>
+
+          <ChoiceField label="Nilai perbaikan">
+            <ChoiceCards
+              name="nilaiPerbaikan"
+              value={nilaiPerbaikan}
+              onChange={setNilaiPerbaikan}
+              required
+              columns={3}
+              options={["Bagus", "Cukup", "Tidak Bagus"]}
+            />
+          </ChoiceField>
+
+          {/* 05 STATUS DAN ORDER */}
+          <div className="form-section-title wide">
+            <span>05</span>
+            <div>
+              <b>Status dan order</b>
+              <small>Status akhir laporan serta kebutuhan pemesanan.</small>
+            </div>
+          </div>
+
+          <ChoiceField label="Order spare part">
+            <ChoiceCards
+              name="order"
+              value={order}
+              onChange={setOrder}
+              columns={2}
+              options={[{ value: "Tanpa Order", label: "Tanpa Order" }, { value: "Order", label: "Pakai Order" }]}
+            />
+          </ChoiceField>
+
+          <ChoiceField label="Status pekerjaan">
+            <ChoiceCards
+              name="statusOrder"
+              value={statusOrder}
+              onChange={setStatusOrder}
+              required
+              columns={2}
+              options={[{ value: "Open", label: "Masih open" }, { value: "Close", label: "Selesai / close" }]}
+            />
+          </ChoiceField>
+
+          <Field label="Keterangan" wide>
+            <textarea
+              name="keterangan"
+              value={keterangan}
+              onChange={e => setKeterangan(e.target.value)}
+              placeholder="Catatan tambahan…"
+              rows={2}
+            />
+          </Field>
+        </div>
+
+        {error && (
+          <div className="remote-error" style={{ margin: "16px 0 0" }}>
+            <AlertTriangle size={17} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="form-footer" style={{ marginTop: "24px" }}>
+          <div className="job-form-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => go("jobs")}
+              disabled={saving}
+            >
+              <ArrowLeft size={16} /> Batal / Kembali
+            </button>
+            <button
+              type="button"
+              className="secondary btn-save-finish"
+              onClick={() => handleSave(false)}
+              disabled={saving}
+            >
+              {saving ? (
+                <><span className="spinner dark" />Menyimpan…</>
+              ) : (
+                <><Check size={17} /> Simpan &amp; Selesai</>
+              )}
+            </button>
+            <button
+              type="button"
+              className="primary btn-save-more"
+              onClick={() => handleSave(true)}
+              disabled={saving}
+            >
+              {saving ? (
+                <><span className="spinner" />Menyimpan…</>
+              ) : (
+                <><Plus size={18} /> Simpan &amp; Tambah Laporan Lagi</>
+              )}
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {/* History of submissions in current session */}
+      {savedHistory.length > 0 && (
+        <div className="job-saved-history">
+          <h4>
+            <CheckCircle2 size={16} /> Riwayat Laporan Tersimpan di Sesi Ini ({savedHistory.length})
+          </h4>
+          <div className="job-saved-list">
+            {savedHistory.map((item) => (
+              <div key={item.id} className="job-saved-item">
+                <div className="item-main">
+                  <span className="badge success">#{item.number}</span>
+                  <b>{item.machine}</b>
+                  <span style={{ color: "var(--muted)" }}>•</span>
+                  <span>{item.jobType}</span>
+                  <span style={{ color: "var(--muted)" }}>•</span>
+                  <span style={{ color: "var(--ink-light, #94a3b8)" }}>
+                    {item.laporan.length > 40 ? `${item.laporan.slice(0, 40)}…` : item.laporan}
+                  </span>
+                </div>
+                <div className="item-time">
+                  {item.time} ({item.hours} jam)
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showAddPart && (
+        <AddMasterPartModal
+          existingCategories={partCategories}
+          existingParts={partRows}
+          initialQuery={partSearch}
+          onClose={() => setShowAddPart(false)}
+          onSelectExisting={item => {
+            selectPartResult(item);
+            setShowAddPart(false);
+          }}
+          onSave={addMasterPart}
+        />
+      )}
+    </>
+  );
 }
 
 function AddMasterPartModal({

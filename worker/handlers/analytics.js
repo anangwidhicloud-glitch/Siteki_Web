@@ -24,7 +24,30 @@ async function maintenanceKpi(env) {
 
 async function combinedKpi(env) {
   const sql = database(env);
-  const rows = await sql`SELECT * FROM monthly_technical_kpi ORDER BY month`;
+  const rows = await sql`
+    WITH report_summary AS (
+      SELECT
+        date_trunc('month', report_date)::date AS month,
+        coalesce(sum(total_hours) FILTER (WHERE lower(trim(coalesce(job_type, ''))) = 'perbaikan'), 0)::numeric(16, 3) AS total_hours,
+        count(*)::integer AS order_count,
+        count(*) FILTER (WHERE lower(coalesce(repair_rating, '')) = 'bagus')::integer AS good_count,
+        count(*) FILTER (WHERE lower(coalesce(repair_rating, '')) = 'cukup')::integer AS fair_count,
+        count(*) FILTER (WHERE lower(replace(coalesce(repair_rating, ''), ' ', '')) = 'tidakbagus')::integer AS poor_count
+      FROM work_reports
+      GROUP BY date_trunc('month', report_date)::date
+    )
+    SELECT
+      targets.month,
+      coalesce(summary.total_hours, 0)::numeric(16, 3) AS total_hours,
+      targets.target_hours,
+      coalesce(summary.order_count, 0) AS order_count,
+      coalesce(summary.good_count, 0) AS good_count,
+      coalesce(summary.fair_count, 0) AS fair_count,
+      coalesce(summary.poor_count, 0) AS poor_count
+    FROM kpi_monthly_targets targets
+    LEFT JOIN report_summary summary USING (month)
+    ORDER BY targets.month
+  `;
   return {
     status: "success",
     rekap: rows.map(row => ({
@@ -37,41 +60,57 @@ async function combinedKpi(env) {
 }
 
 async function dailyDashboardKpi(env, params) {
-  const currentYear=new Date().getFullYear();
-  const year=Number(params.year)||currentYear;
-  if(!Number.isInteger(year)||year<2000||year>2100)throw new HttpError(400,"Tahun KPI harian tidak valid.");
-  const start=`${year}-01-01`,end=`${year+1}-01-01`,sql=database(env);
-  const[maintenance,downtime,orders]=await Promise.all([
-    sql`SELECT inspected_on AS day,count(*)::integer AS value
+  const currentYear = new Date().getFullYear();
+  const year = Number(params.year) || currentYear;
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new HttpError(400, "Tahun KPI harian tidak valid.");
+  const start = `${year}-01-01`, end = `${year + 1}-01-01`, sql = database(env);
+  const [maintenance, downtime, orders] = await Promise.all([
+    sql`SELECT inspected_on AS day, count(*)::integer AS value
         FROM maintenance_inspections
-        WHERE inspected_on>=${start}::date AND inspected_on<${end}::date
+        WHERE inspected_on >= ${start}::date AND inspected_on < ${end}::date
         GROUP BY inspected_on ORDER BY inspected_on`,
-    sql`SELECT report_date AS day,coalesce(sum(total_hours),0) AS value
+    sql`SELECT report_date AS day, coalesce(sum(total_hours), 0) AS value
         FROM work_reports
-        WHERE report_date>=${start}::date AND report_date<${end}::date
+        WHERE report_date >= ${start}::date AND report_date < ${end}::date
+          AND lower(trim(coalesce(job_type, ''))) = 'perbaikan'
         GROUP BY report_date ORDER BY report_date`,
-    sql`SELECT report_date AS day,count(*)::integer AS value
+    sql`SELECT report_date AS day, count(*)::integer AS value
         FROM work_reports
-        WHERE report_date>=${start}::date AND report_date<${end}::date
+        WHERE report_date >= ${start}::date AND report_date < ${end}::date
         GROUP BY report_date ORDER BY report_date`,
   ]);
-  const map=rows=>rows.map(row=>({tanggal:dateKey(row.day),value:Number(row.value||0)}));
-  return{status:"success",year,data:{maintenance:map(maintenance),downtime:map(downtime),orders:map(orders)}};
+  const map = rows => rows.map(row => ({ tanggal: dateKey(row.day), value: Number(row.value || 0) }));
+  return { status: "success", year, data: { maintenance: map(maintenance), downtime: map(downtime), orders: map(orders) } };
 }
 
 async function downtime(env) {
   const sql = database(env);
   const [monthly, reports] = await Promise.all([
-    sql`SELECT month,total_hours,target_hours FROM monthly_technical_kpi ORDER BY month`,
-    sql`SELECT report_date,machine_type,machine_name,department,component_type,total_hours FROM work_reports ORDER BY report_date`,
+    sql`
+      WITH report_summary AS (
+        SELECT
+          date_trunc('month', report_date)::date AS month,
+          coalesce(sum(total_hours) FILTER (WHERE lower(trim(coalesce(job_type, ''))) = 'perbaikan'), 0)::numeric(16, 3) AS total_hours
+        FROM work_reports
+        GROUP BY date_trunc('month', report_date)::date
+      )
+      SELECT targets.month, coalesce(summary.total_hours, 0)::numeric(16, 3) AS total_hours, targets.target_hours
+      FROM kpi_monthly_targets targets
+      LEFT JOIN report_summary summary USING (month)
+      ORDER BY targets.month
+    `,
+    sql`SELECT report_date, machine_type, machine_name, department, component_type, total_hours
+        FROM work_reports
+        WHERE lower(trim(coalesce(job_type, ''))) = 'perbaikan'
+        ORDER BY report_date`,
   ]);
   return {
     status: "success",
-    rekap: monthly.map(row => ({ bulan:shortMonth(row.month), jam:Number(row.total_hours||0), target:Number(row.target_hours||500) })),
+    rekap: monthly.map(row => ({ bulan: shortMonth(row.month), jam: Number(row.total_hours || 0), target: Number(row.target_hours || 500) })),
     laporan_mentah: reports.map(row => ({
-      bulan:shortMonth(row.report_date), jenis:row.machine_type||"Lainnya",
-      mesin:row.machine_name||"Lainnya", bagian:row.department||"Lainnya",
-      komponen:row.component_type||"Lainnya", total_jam:Number(row.total_hours||0),
+      bulan: shortMonth(row.report_date), jenis: row.machine_type || "Lainnya",
+      mesin: row.machine_name || "Lainnya", bagian: row.department || "Lainnya",
+      komponen: row.component_type || "Lainnya", total_jam: Number(row.total_hours || 0),
     })),
   };
 }

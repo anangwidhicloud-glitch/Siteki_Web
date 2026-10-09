@@ -4,7 +4,7 @@ CREATE OR REPLACE VIEW monthly_technical_kpi AS
 WITH report_summary AS (
   SELECT
     date_trunc('month', report_date)::date AS month,
-    coalesce(sum(total_hours), 0)::numeric(16, 3) AS total_hours,
+    coalesce(sum(total_hours) FILTER (WHERE lower(trim(coalesce(job_type, ''))) = 'perbaikan'), 0)::numeric(16, 3) AS total_hours,
     count(*)::integer AS order_count,
     count(*) FILTER (WHERE lower(coalesce(repair_rating, '')) = 'bagus')::integer
       AS good_count,

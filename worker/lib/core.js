@@ -14,21 +14,25 @@ export function database(env) {
 
 export function allowedOrigin(request, env) {
   const origin = request.headers.get("Origin");
+  if (!origin) return "*";
   const configured = String(env.ALLOWED_ORIGINS || env.ALLOWED_ORIGIN || "")
     .split(",")
     .map(value => value.trim())
     .filter(Boolean);
-  if (!origin) return configured[0] || "*";
   if (!configured.length || configured.includes("*")) return origin;
   if (configured.includes(origin)) return origin;
   if (
     /^https?:\/\/localhost(:\d+)?$/i.test(origin) ||
+    /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin) ||
+    /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)\d+(\.\d+)?(:\d+)?$/i.test(origin) ||
     /^capacitor:\/\/localhost$/i.test(origin) ||
-    /^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)
+    /^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin) ||
+    /^https:\/\/([a-z0-9-]+\.)*workers\.dev$/i.test(origin) ||
+    /^https:\/\/([a-z0-9-]+\.)*pages\.dev$/i.test(origin)
   ) {
     return origin;
   }
-  throw new HttpError(403, "Origin tidak diizinkan.");
+  return origin;
 }
 
 export function corsHeaders(request, env) {
@@ -43,10 +47,13 @@ export function corsHeaders(request, env) {
   };
 }
 
-export function json(request, env, status, payload) {
+export function json(request, env, status, payload, customHeaders = {}) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: corsHeaders(request, env),
+    headers: {
+      ...corsHeaders(request, env),
+      ...customHeaders,
+    },
   });
 }
 
@@ -198,21 +205,26 @@ export async function handleRequest(request, env, router) {
       throw new HttpError(405, "Metode tidak didukung.");
     }
     const payload = await router({ request, env, url, resource, body });
+    if (payload instanceof Response) return payload;
     return json(request, env, 200, payload);
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
     if (status === 500) console.error(error?.stack || error);
-    try {
-      return json(request, env, status, {
-        status: "error",
-        message: error.message || "Server SiTeki mengalami kendala.",
-        details: error.stack || String(error)
-      });
-    } catch {
-      return new Response(JSON.stringify({ status: "error", message: error.message }), {
-        status,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      });
-    }
+    const safeOrigin = request?.headers?.get("Origin") || "*";
+    return new Response(JSON.stringify({
+      status: "error",
+      message: error.message || "Server SiTeki mengalami kendala saat menghubungkan database.",
+      details: error.stack || String(error)
+    }), {
+      status,
+      headers: {
+        "Access-Control-Allow-Origin": safeOrigin,
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Vary": "Origin"
+      },
+    });
   }
 }

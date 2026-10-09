@@ -6,7 +6,7 @@ const API_BASE = String(
   .trim().replace(/\?+$/, "");
 const responseCache = new Map();
 const pendingRequests = new Map();
-const RETRYABLE_READ_STATUSES = new Set([502, 503, 504]);
+const RETRYABLE_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function endpoint(resource) {
@@ -37,10 +37,10 @@ export function formatApiError(error) {
   const msg = String(error.message || "");
   const name = String(error.name || "");
   if (name === "AbortError" || /aborted/i.test(msg) || /signal is aborted/i.test(msg)) {
-    return new Error("Waktu tunggu koneksi habis (timeout) atau koneksi terputus. Pastikan internet stabil dan coba lagi.");
+    return new Error("Waktu tunggu koneksi habis (timeout). Server atau database sedang sibuk. Silakan coba lagi.");
   }
   if (/failed to fetch|network\s?error|load failed/i.test(msg)) {
-    return new Error("Tidak dapat terhubung ke server. Periksa koneksi internet Anda.");
+    return new Error("Koneksi ke server terputus atau database sedang memulai ulang (cold start). Silakan coba lagi.");
   }
   return error;
 }
@@ -128,12 +128,13 @@ export async function apiGet(endpoint, params = {}, options = {}) {
   if (cacheable && pendingRequests.has(key)) return pendingRequests.get(key);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeout || 45000);
+  const timeout = setTimeout(() => controller.abort(), options.timeout || 60000);
   const request = (async () => {
     try {
       let value;
       let lastError;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      const maxAttempts = 4;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         try {
           const response = await fetch(withQuery(endpoint, params), {
             method: "GET",
@@ -142,8 +143,8 @@ export async function apiGet(endpoint, params = {}, options = {}) {
             signal: controller.signal,
             redirect: "follow"
           });
-          if (RETRYABLE_READ_STATUSES.has(response.status) && attempt < 2) {
-            await wait(350 * (attempt + 1));
+          if (RETRYABLE_READ_STATUSES.has(response.status) && attempt < maxAttempts - 1) {
+            await wait(600 * Math.pow(1.8, attempt));
             continue;
           }
           value = await parseResponse(response);
@@ -151,8 +152,8 @@ export async function apiGet(endpoint, params = {}, options = {}) {
           break;
         } catch (error) {
           lastError = formatApiError(error);
-          if (controller.signal.aborted || attempt === 2) break;
-          await wait(350 * (attempt + 1));
+          if (controller.signal.aborted || attempt === maxAttempts - 1) break;
+          await wait(600 * Math.pow(1.8, attempt));
         }
       }
       if (lastError) throw lastError;

@@ -25,9 +25,28 @@ function maintenanceObject(row) {
   };
 }
 
-async function getMaintenance(env) {
-  const sql=database(env);
-  return (await sql`SELECT * FROM maintenance_inspections ORDER BY inspected_on,created_at`).map(maintenanceObject);
+async function getMaintenance(env, params = {}) {
+  const sql = database(env);
+  const days = params.days ? Number(params.days) : null;
+  const limit = params.limit ? Math.min(Math.max(1, Number(params.limit)), 5000) : null;
+  let rows;
+  if (days && Number.isFinite(days)) {
+    rows = await sql`
+      SELECT * FROM maintenance_inspections
+      WHERE inspected_on >= CURRENT_DATE - (${days} * INTERVAL '1 day')
+      ORDER BY inspected_on DESC, created_at DESC
+      ${limit ? sql`LIMIT ${limit}` : sql``}
+    `;
+  } else if (limit) {
+    rows = await sql`
+      SELECT * FROM maintenance_inspections
+      ORDER BY inspected_on DESC, created_at DESC
+      LIMIT ${limit}
+    `;
+  } else {
+    rows = await sql`SELECT * FROM maintenance_inspections ORDER BY inspected_on, created_at`;
+  }
+  return rows.map(maintenanceObject);
 }
 
 async function getMaintenancePrintData(request,env) {
@@ -474,7 +493,7 @@ export async function handleAssets({request,env,url,resource,body,executionCtx})
     if(request.method==="GET") {
       if(action==="getPrintData") return getMaintenancePrintData(request,env);
       if(action==="getInspectionChecks"||action==="getChecks") return getInspectionChecks(request,env,params.id);
-      return getMaintenance(env);
+      return getMaintenance(env, params);
     }
     if(action==="delete"||action==="hapus") return deleteMaintenance(request,env,body);
     if(action==="update"||action==="edit"||(body.id&&action!=="insert")) return updateMaintenance(request,env,body);

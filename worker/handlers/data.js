@@ -170,7 +170,13 @@ function reportObject(row) {
 
 async function reports(env, params) {
   const sql = database(env);
-  let rows = await sql`SELECT * FROM work_reports ORDER BY report_date DESC, created_at DESC`;
+  const limit = params.limit ? Math.min(Math.max(1, Number(params.limit)), 5000) : null;
+  let rows;
+  if (limit) {
+    rows = await sql`SELECT * FROM work_reports ORDER BY report_date DESC, created_at DESC LIMIT ${limit}`;
+  } else {
+    rows = await sql`SELECT * FROM work_reports ORDER BY report_date DESC, created_at DESC`;
+  }
   const start = isoDate(params.tglAwal);
   const end = isoDate(params.tglAkhir);
   if (start) rows = rows.filter(row => dateKey(row.report_date) >= start);
