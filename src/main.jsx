@@ -4943,10 +4943,10 @@ function ReportAdminEditor({ report, onClose, onSave, session, notify }) {
   }, [report, parseStart.date, dateValue]);
 
   const initialSection = useMemo(() => {
-    const raw = report.bagian || "";
-    if (raw === "Tek. Shift A") return "Teknik A";
-    if (raw === "Tek. Shift B") return "Teknik B";
-    return raw;
+    const raw = String(report.bagian || "").trim();
+    if (/shift\s?a/i.test(raw)) return "Teknik A";
+    if (/shift\s?b/i.test(raw)) return "Teknik B";
+    return raw || "Teknik";
   }, [report.bagian]);
 
   const [section, setSection] = useState(initialSection);
@@ -5307,17 +5307,27 @@ function ChoiceField({ label, children, wide = false }) {
 }
 
 function ChoiceCards({ name, options, value, onChange, defaultValue = "", required = false, columns }) {
+  const normalizedOptions = useMemo(() => {
+    const list = options.map(option => (typeof option === "string" ? { value: option, label: option } : option));
+    if (value !== undefined && value !== null && String(value).trim() !== "" && !list.some(item => String(item.value || "").toLowerCase() === String(value || "").toLowerCase())) {
+      list.push({ value, label: value });
+    }
+    return list;
+  }, [options, value]);
+
   return <div className="choice-radio-grid" style={columns ? { "--choice-columns": columns } : undefined}>
-    {options.map(option => {
-      const item = typeof option === "string" ? { value: option, label: option } : option;
+    {normalizedOptions.map(item => {
       const controlled = value !== undefined;
+      const isChecked = controlled
+        ? String(value || "").toLowerCase() === String(item.value || "").toLowerCase()
+        : undefined;
       return <label className="choice-radio" key={`${name}-${item.value}`}>
         <input
           type="radio"
           name={name}
           value={item.value}
-          checked={controlled ? value === item.value : undefined}
-          defaultChecked={!controlled && defaultValue === item.value}
+          checked={isChecked}
+          defaultChecked={!controlled && String(defaultValue || "").toLowerCase() === String(item.value || "").toLowerCase()}
           onChange={event => onChange?.(event.target.value)}
           required={required}
         />
