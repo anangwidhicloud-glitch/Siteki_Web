@@ -5114,7 +5114,7 @@ function ReportAdminEditor({ report, onClose, onSave, session, notify }) {
   };
 
   return <div className="modal-overlay" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose(); }}>
-    <form className="modal-card report-admin-editor" onSubmit={submit} style={{ width: "min(860px, 96vw)", maxHeight: "90vh", overflowY: "auto" }}>
+    <form className="modal-card report-admin-editor" onSubmit={submit} style={{ width: "min(860px, 96vw)", maxHeight: "min(92vh, calc(100dvh - 16px))", overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehaviorY: "contain" }}>
       <div className="modal-head">
         <div><p className="eyebrow">Admin report editor</p><h3>Edit laporan kerja</h3><small>{report.mesin || report.namaMesin} · Baris {report.rowIndex || "-"}</small></div>
         <button type="button" onClick={onClose} disabled={saving}><X size={18} /></button>

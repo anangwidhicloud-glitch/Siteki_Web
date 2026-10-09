@@ -460,7 +460,7 @@ td b,td small { display:block; }td b { color:var(--ink);font-size:11px; }td smal
 .modal-overlay {
   position:fixed;
   inset:0;
-  z-index:90;
+  z-index:1200;
   display:flex;
   justify-content:center;
   align-items:flex-start;
@@ -469,6 +469,7 @@ td b,td small { display:block; }td b { color:var(--ink);font-size:11px; }td smal
   background:rgba(3,20,15,.65);
   backdrop-filter:blur(6px);
   -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
 }
 .modal-card {
   width:min(760px,100%);
@@ -1014,16 +1015,26 @@ td b,td small { display:block; }td b { color:var(--ink);font-size:11px; }td smal
   .overtime-legend { flex-wrap:wrap;gap:8px 14px; }
 
   .modal-overlay,.overtime-modal-backdrop {
-    align-items:end;
-    place-items:end center;
-    padding:12px 0 0;
-    overflow:hidden;
+    align-items:flex-end;
+    place-items:flex-end center;
+    padding:env(safe-area-inset-top, 16px) 0 0;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain;
+    z-index:1200;
   }
   .modal-card,.overtime-modal {
     width:100%;
-    max-height:calc(100dvh - 12px);
-    padding:18px 15px calc(18px + env(safe-area-inset-bottom));
+    max-height:calc(100dvh - env(safe-area-inset-top, 16px) - 10px);
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain;
+    padding:20px 16px calc(70px + env(safe-area-inset-bottom));
     border-radius:20px 20px 0 0;
+  }
+  .app-shell:has(.modal-overlay) .mobile-nav,
+  body:has(.modal-overlay) .mobile-nav {
+    display:none !important;
   }
   .modal-actions,.overtime-modal-actions { flex-wrap:wrap; }
   .modal-actions>button,.overtime-modal-actions>button { flex:1 1 130px;min-height:42px; }
