@@ -168,24 +168,112 @@ function reportObject(row) {
   };
 }
 
+const INDONESIAN_MONTH_MAP = {
+  januari: 1, februari: 2, maret: 3, april: 4, mei: 5, juni: 6,
+  juli: 7, agustus: 8, september: 9, oktober: 10, november: 11, desember: 12
+};
+
+function parseMonthPeriod(bulan, yearParam, monthParam) {
+  if (yearParam && monthParam) {
+    const y = Number(yearParam);
+    const m = Number(monthParam);
+    if (y && m >= 1 && m <= 12) {
+      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      return { startDate, endDate };
+    }
+  }
+  if (!bulan) return null;
+  const str = String(bulan).trim().toLowerCase();
+  const isoMatch = str.match(/^(\d{4})-(\d{1,2})$/);
+  if (isoMatch) {
+    const y = Number(isoMatch[1]);
+    const m = Number(isoMatch[2]);
+    if (y && m >= 1 && m <= 12) {
+      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      return { startDate, endDate };
+    }
+  }
+  const parts = str.split(/\s+/);
+  if (parts.length >= 2) {
+    const monthName = parts[0];
+    const year = Number(parts[1]);
+    const monthNum = INDONESIAN_MONTH_MAP[monthName];
+    if (year && monthNum) {
+      const startDate = `${year}-${String(monthNum).padStart(2, "0")}-01`;
+      const lastDay = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+      const endDate = `${year}-${String(monthNum).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      return { startDate, endDate };
+    }
+  }
+  return null;
+}
+
 async function reports(env, params) {
   const sql = database(env);
   const limit = params.limit ? Math.min(Math.max(1, Number(params.limit)), 5000) : null;
-  let rows;
-  if (limit) {
-    rows = await sql`SELECT * FROM work_reports ORDER BY report_date DESC, created_at DESC LIMIT ${limit}`;
-  } else {
-    rows = await sql`SELECT * FROM work_reports ORDER BY report_date DESC, created_at DESC`;
-  }
   const start = isoDate(params.tglAwal);
   const end = isoDate(params.tglAkhir);
-  if (start) rows = rows.filter(row => dateKey(row.report_date) >= start);
-  if (end) rows = rows.filter(row => dateKey(row.report_date) <= end);
-  if (params.bulan) {
-    const query = String(params.bulan).toLocaleLowerCase("id-ID");
-    rows = rows.filter(row => new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric", timeZone: "UTC" })
-      .format(new Date(`${dateKey(row.report_date)}T00:00:00Z`)).toLocaleLowerCase("id-ID") === query);
+  const period = parseMonthPeriod(params.bulan, params.year, params.month);
+
+  let rows;
+  if (start && end) {
+    rows = await sql`
+      SELECT id, machine_id, part_id, report_date, department, machine_category, machine_type,
+             machine_name, job_type, work_description, component_type, started_at, finished_at,
+             total_hours, definition, spare_part_name, spare_part_size, order_type, order_status,
+             repair_rating, notes, part_category, source_sheet
+      FROM work_reports
+      WHERE report_date >= ${start}::date AND report_date <= ${end}::date
+      ORDER BY report_date DESC, created_at DESC
+      ${limit ? sql`LIMIT ${limit}` : sql``}
+    `;
+  } else if (period) {
+    rows = await sql`
+      SELECT id, machine_id, part_id, report_date, department, machine_category, machine_type,
+             machine_name, job_type, work_description, component_type, started_at, finished_at,
+             total_hours, definition, spare_part_name, spare_part_size, order_type, order_status,
+             repair_rating, notes, part_category, source_sheet
+      FROM work_reports
+      WHERE report_date >= ${period.startDate}::date AND report_date <= ${period.endDate}::date
+      ORDER BY report_date DESC, created_at DESC
+      ${limit ? sql`LIMIT ${limit}` : sql``}
+    `;
+  } else if (start && !end) {
+    rows = await sql`
+      SELECT id, machine_id, part_id, report_date, department, machine_category, machine_type,
+             machine_name, job_type, work_description, component_type, started_at, finished_at,
+             total_hours, definition, spare_part_name, spare_part_size, order_type, order_status,
+             repair_rating, notes, part_category, source_sheet
+      FROM work_reports
+      WHERE report_date >= ${start}::date
+      ORDER BY report_date DESC, created_at DESC
+      ${limit ? sql`LIMIT ${limit}` : sql``}
+    `;
+  } else if (limit) {
+    rows = await sql`
+      SELECT id, machine_id, part_id, report_date, department, machine_category, machine_type,
+             machine_name, job_type, work_description, component_type, started_at, finished_at,
+             total_hours, definition, spare_part_name, spare_part_size, order_type, order_status,
+             repair_rating, notes, part_category, source_sheet
+      FROM work_reports
+      ORDER BY report_date DESC, created_at DESC
+      LIMIT ${limit}
+    `;
+  } else {
+    rows = await sql`
+      SELECT id, machine_id, part_id, report_date, department, machine_category, machine_type,
+             machine_name, job_type, work_description, component_type, started_at, finished_at,
+             total_hours, definition, spare_part_name, spare_part_size, order_type, order_status,
+             repair_rating, notes, part_category, source_sheet
+      FROM work_reports
+      ORDER BY report_date DESC, created_at DESC
+    `;
   }
+
   return rows.map(reportObject);
 }
 

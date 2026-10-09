@@ -4611,14 +4611,14 @@ function Jobs({ go, session, notify }) {
   // tersebut saja sehingga browser tidak perlu mengunduh seluruh arsip.
   const remote = useRemoteData(async () => {
     const rows = asArray(await apiGet(ENDPOINTS.jobs, {
-      action: "getDataLapKerja", bulan: requestedPeriod
-    }, { timeout: 45000 }));
+      action: "getDataLapKerja", bulan: requestedPeriod, year: filters.year, month: filters.month
+    }, { timeout: 30000 }));
     // Spreadsheet memiliki tab salinan/arsip dengan header serupa. Gunakan
     // `lap_kerja` sebagai sumber utama yang sama dengan aplikasi Android agar
     // laporan tidak terduplikasi dari "Copy of lap_kerja"/"Laporan Kerja".
     const primary = rows.filter(report => String(report.sheetName || "").trim().toLowerCase() === "lap_kerja");
     return primary.length ? primary : rows;
-  }, [filters.year, filters.month]);
+  }, [filters.year, filters.month], { silentRefresh: true, retries: 3 });
   const isAdmin = String(session?.role || "").trim().toLowerCase() === "admin";
   const capabilities = useRemoteData(async () => isAdmin
     ? apiGet(ENDPOINTS.jobs, { action: "getCapabilities" })
