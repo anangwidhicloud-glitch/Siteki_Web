@@ -1,5 +1,6 @@
 const API_BASE = String(
   import.meta.env?.VITE_API_URL ||
+  (import.meta.env?.DEV ? "https://siteki-neon-api.siteki.workers.dev" : "") ||
   (typeof process !== "undefined" ? process.env?.VITE_API_URL : "") || ""
 )
   .trim().replace(/\?+$/, "");
@@ -9,9 +10,9 @@ const RETRYABLE_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function endpoint(resource) {
-  const base = API_BASE || "";
-  const separator = base.includes("?") ? "&" : "?";
-  return `${base}${separator}resource=${encodeURIComponent(resource)}`;
+  if (!API_BASE) return "";
+  const separator = API_BASE.includes("?") ? "&" : "?";
+  return `${API_BASE}${separator}resource=${encodeURIComponent(resource)}`;
 }
 
 function sessionToken() {
