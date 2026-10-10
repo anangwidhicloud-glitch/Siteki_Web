@@ -683,137 +683,19 @@ function PageRouter({ page, go, session, selectedOrder, notify, themeMode, setTh
   }
 }
 
-const DEFAULT_COMBINED_KPI = [
-  { bulan: "Jan", jam: 334.6, order: 82, target: 500 },
-  { bulan: "Feb", jam: 222.1, order: 74, target: 500 },
-  { bulan: "Mar", jam: 338.6, order: 91, target: 500 },
-  { bulan: "Apr", jam: 457.2, order: 88, target: 500 },
-  { bulan: "Mei", jam: 386.7, order: 85, target: 500 },
-  { bulan: "Jun", jam: 445.3, order: 96, target: 500 },
-  { bulan: "Jul", jam: 562.7, order: 104, target: 500 },
-  { bulan: "Agu", jam: 28.2, order: 12, target: 500 },
-  { bulan: "Sep", jam: 47.9, order: 18, target: 500 },
-  { bulan: "Okt", jam: 66.7, order: 25, target: 500 },
-  { bulan: "Nov", jam: 0, order: 0, target: 500 },
-  { bulan: "Des", jam: 0, order: 0, target: 500 }
-];
-
-const DEFAULT_MAINTENANCE_KPI = [
-  { bulan: "Jan", target: 0.8, pencapaian: 0.88 },
-  { bulan: "Feb", target: 0.8, pencapaian: 0.85 },
-  { bulan: "Mar", target: 0.8, pencapaian: 0.92 },
-  { bulan: "Apr", target: 0.8, pencapaian: 0.89 },
-  { bulan: "Mei", target: 0.8, pencapaian: 0.91 },
-  { bulan: "Jun", target: 0.8, pencapaian: 0.86 },
-  { bulan: "Jul", target: 0.8, pencapaian: 0.94 },
-  { bulan: "Agu", target: 0.8, pencapaian: 0.90 },
-  { bulan: "Sep", target: 0.8, pencapaian: 0.87 },
-  { bulan: "Okt", target: 0.8, pencapaian: 0.89 },
-  { bulan: "Nov", target: 0.8, pencapaian: 0 },
-  { bulan: "Des", target: 0.8, pencapaian: 0 }
-];
-
-const DEFAULT_OVERTIME_KPI = [
-  { bulan: "Jan", totalJam: 142.5 },
-  { bulan: "Feb", totalJam: 128.0 },
-  { bulan: "Mar", totalJam: 156.5 },
-  { bulan: "Apr", totalJam: 164.0 },
-  { bulan: "Mei", totalJam: 139.5 },
-  { bulan: "Jun", totalJam: 172.0 },
-  { bulan: "Jul", totalJam: 185.5 },
-  { bulan: "Agu", totalJam: 145.0 },
-  { bulan: "Sep", totalJam: 138.0 },
-  { bulan: "Okt", totalJam: 152.5 },
-  { bulan: "Nov", totalJam: 0 },
-  { bulan: "Des", totalJam: 0 }
-];
-
-const DEFAULT_KVARH_MONTHLY = [
-  { month: 1, label: "Jan", activeKwh: 34200, reactiveKvarh: 18500, reactiveLimitKvarh: 21204, excessReactiveKvarh: 0, checkCount: 31, conclusion: "AMAN", lastEntryDay: 31 },
-  { month: 2, label: "Feb", activeKwh: 31800, reactiveKvarh: 17200, reactiveLimitKvarh: 19716, excessReactiveKvarh: 0, checkCount: 28, conclusion: "AMAN", lastEntryDay: 28 },
-  { month: 3, label: "Mar", activeKwh: 36500, reactiveKvarh: 19800, reactiveLimitKvarh: 22630, excessReactiveKvarh: 0, checkCount: 31, conclusion: "AMAN", lastEntryDay: 31 },
-  { month: 4, label: "Apr", activeKwh: 35100, reactiveKvarh: 18900, reactiveLimitKvarh: 21762, excessReactiveKvarh: 0, checkCount: 30, conclusion: "AMAN", lastEntryDay: 30 },
-  { month: 5, label: "Mei", activeKwh: 37200, reactiveKvarh: 20100, reactiveLimitKvarh: 23064, excessReactiveKvarh: 0, checkCount: 31, conclusion: "AMAN", lastEntryDay: 31 },
-  { month: 6, label: "Jun", activeKwh: 38400, reactiveKvarh: 20800, reactiveLimitKvarh: 23808, excessReactiveKvarh: 0, checkCount: 30, conclusion: "AMAN", lastEntryDay: 30 },
-  { month: 7, label: "Jul", activeKwh: 39600, reactiveKvarh: 21500, reactiveLimitKvarh: 24552, excessReactiveKvarh: 0, checkCount: 31, conclusion: "AMAN", lastEntryDay: 31 },
-  { month: 8, label: "Agu", activeKwh: 36800, reactiveKvarh: 19900, reactiveLimitKvarh: 22816, excessReactiveKvarh: 0, checkCount: 31, conclusion: "AMAN", lastEntryDay: 31 },
-  { month: 9, label: "Sep", activeKwh: 38100, reactiveKvarh: 20600, reactiveLimitKvarh: 23622, excessReactiveKvarh: 0, checkCount: 30, conclusion: "AMAN", lastEntryDay: 30 },
-  { month: 10, label: "Okt", activeKwh: 12400, reactiveKvarh: 6700, reactiveLimitKvarh: 7688, excessReactiveKvarh: 0, checkCount: 9, conclusion: "AMAN", lastEntryDay: 9, isPartial: true }
-];
-
-function createDefaultElectricityChecks() {
-  const checks = [];
-  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 9];
-  const baseKwh = [1100, 1130, 1180, 1170, 1200, 1240, 1280, 1190, 1270, 1350];
-  const baseKvar = [600, 615, 640, 630, 650, 670, 695, 645, 685, 720];
-
-  daysInMonth.forEach((totalDays, mIdx) => {
-    const month = mIdx + 1;
-    const mStr = String(month).padStart(2, "0");
-    const bKwh = baseKwh[mIdx] || 1200;
-    const bKvar = baseKvar[mIdx] || 650;
-
-    for (let day = 1; day <= totalDays; day++) {
-      const dStr = String(day).padStart(2, "0");
-      const dayVariation = ((day * 7 + month * 3) % 5) * 15 - 25;
-      const active = bKwh + dayVariation + Math.round((day / totalDays) * 60);
-      const reactive = Math.round(bKvar + (dayVariation * 0.52) + ((day / totalDays) * 35));
-      checks.push({
-        id: `check_m${month}_d${day}`,
-        tanggal: `${dStr}/${mStr}/2026 16:00`,
-        pemakaian_kwh: active,
-        nilai_kvar: reactive
-      });
-    }
-  });
-
-  return checks;
-}
-
-const DEFAULT_ELECTRICITY_CHECKS = createDefaultElectricityChecks();
-
-function createDefaultCosPhiPanel() {
-  const panelList = [
-    { code: "panel_1", base: 0.94 },
-    { code: "panel_2", base: 0.92 },
-    { code: "panel_3", base: 0.95 },
-    { code: "panel_4", base: 0.91 }
-  ];
-  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 9];
-  const list = [];
-
-  daysInMonth.forEach((totalDays, mIdx) => {
-    const month = mIdx + 1;
-    const mStr = String(month).padStart(2, "0");
-
-    for (let day = 1; day <= totalDays; day++) {
-      const dStr = String(day).padStart(2, "0");
-      panelList.forEach(p => {
-        const morningVar = ((day * 7 + month * 3) % 5) * 0.01 - 0.02;
-        const afternoonVar = ((day * 11 + month * 5) % 5) * 0.01 - 0.01;
-        list.push({
-          tanggal: `${dStr}/${mStr}/2026 08:30`,
-          panel: p.code,
-          code: p.code,
-          cos_phi: Math.round((p.base + morningVar) * 100) / 100
-        });
-        list.push({
-          tanggal: `${dStr}/${mStr}/2026 14:30`,
-          panel: p.code,
-          code: p.code,
-          cos_phi: Math.round((p.base + afternoonVar) * 100) / 100
-        });
-      });
-    }
-  });
-
-  return list;
-}
-
-const DEFAULT_COSPHI_PANEL = createDefaultCosPhiPanel();
+const DEFAULT_COMBINED_KPI = [];
+const DEFAULT_MAINTENANCE_KPI = [];
+const DEFAULT_OVERTIME_KPI = [];
+const DEFAULT_KVARH_MONTHLY = [];
+const DEFAULT_ELECTRICITY_CHECKS = [];
+const DEFAULT_COSPHI_PANEL = [];
 
 function getStoredDashboardCache(key, defaultValue) {
   try {
+    if (key === "cosphi_panel") {
+      localStorage.removeItem("siteki_dashboard_cosphi_panel_cache");
+      return defaultValue;
+    }
     const item = localStorage.getItem(`siteki_dashboard_${key}_cache`);
     if (item) {
       const parsed = JSON.parse(item);
@@ -5056,78 +4938,8 @@ function MaintenanceKpiDetail() {
   </div>;
 }
 
-const DEFAULT_DOWNTIME_REKAP = [
-  { bulan: "Jan", jam: 334.6 },
-  { bulan: "Feb", jam: 222.1 },
-  { bulan: "Mar", jam: 338.6 },
-  { bulan: "Apr", jam: 457.2 },
-  { bulan: "Mei", jam: 386.7 },
-  { bulan: "Jun", jam: 445.3 },
-  { bulan: "Jul", jam: 562.7 },
-  { bulan: "Agu", jam: 28.2 },
-  { bulan: "Sep", jam: 47.9 },
-  { bulan: "Okt", jam: 66.7 },
-  { bulan: "Nov", jam: 0 },
-  { bulan: "Des", jam: 0 }
-];
-
-function createDefaultDowntimeJobs() {
-  const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober"];
-  const machineData = [
-    { mesin: "Slitting 1", jenis: "Slitting", def: "Downtime", bag: "Tek. Shift A (Teknik A)", baseHours: 32 },
-    { mesin: "Slitting 2", jenis: "Slitting", def: "Downtime", bag: "Tek. Shift B (Teknik B)", baseHours: 28 },
-    { mesin: "Pipa ERW 1", jenis: "Pipa ERW", def: "Downtime", bag: "Tek. Shift A (Teknik A)", baseHours: 42 },
-    { mesin: "Pipa ERW 2", jenis: "Pipa ERW", def: "Perbaikan", bag: "Teknik", baseHours: 36 },
-    { mesin: "Pipa ERW 3", jenis: "Pipa ERW", def: "Biasa", bag: "Tek. Shift B (Teknik B)", baseHours: 25 },
-    { mesin: "Forklift 3T", jenis: "Forklift", def: "Pemeriksaan", bag: "Bengkel", baseHours: 18 },
-    { mesin: "Forklift 5T", jenis: "Forklift", def: "Pemasangan", bag: "Bengkel", baseHours: 22 },
-    { mesin: "Genset 500kVA", jenis: "Genset", def: "Perawatan", bag: "Teknik", baseHours: 15 },
-    { mesin: "Bevel 1", jenis: "Bevel", def: "Setting", bag: "Tek. Shift A (Teknik A)", baseHours: 20 },
-    { mesin: "Bevel 2", jenis: "Bevel", def: "Downtime", bag: "Tek. Shift B (Teknik B)", baseHours: 19 },
-    { mesin: "Trailler 1", jenis: "Trailler", def: "Perbaikan", bag: "Bengkel", baseHours: 14 },
-    { mesin: "Trailler 2", jenis: "Trailler", def: "Pemindahan", bag: "Konstruksi", baseHours: 16 },
-    { mesin: "Dump Truck", jenis: "Dump", def: "Biasa", bag: "Bengkel", baseHours: 12 },
-    { mesin: "Mobile Crane", jenis: "Mobile Crane", def: "Pemasangan", bag: "Konstruksi", baseHours: 24 },
-    { mesin: "Potong Bahan 1", jenis: "Potong Bahan", def: "Pembuatan", bag: "Konstruksi", baseHours: 17 },
-    { mesin: "Perakitan 1", jenis: "Perakitan", def: "Setting", bag: "Teknik", baseHours: 13 },
-    { mesin: "Kop 1", jenis: "Kop", def: "Biasa", bag: "Tek. Shift A (Teknik A)", baseHours: 10 },
-    { mesin: "Lakop 1", jenis: "Lakop", def: "Pemeriksaan", bag: "Tek. Shift B (Teknik B)", baseHours: 11 },
-    { mesin: "Alat Uji 1", jenis: "Alat Uji", def: "Pemeriksaan", bag: "Teknik", baseHours: 8 }
-  ];
-
-  const jobs = [];
-  const monthMultipliers = [1.0, 0.66, 1.01, 1.36, 1.15, 1.33, 1.68, 0.08, 0.14, 0.20];
-
-  months.forEach((mName, mIdx) => {
-    const mult = monthMultipliers[mIdx] || 1;
-    const mNum = String(mIdx + 1).padStart(2, "0");
-    machineData.forEach((item, itemIdx) => {
-      const jam = Math.round(item.baseHours * mult * (0.85 + (itemIdx % 4) * 0.1) * 10) / 10;
-      if (jam > 0) {
-        const day = String((itemIdx % 26) + 1).padStart(2, "0");
-        jobs.push({
-          id: `default_job_${mIdx}_${itemIdx}`,
-          tanggal: `${day}/${mNum}/2026`,
-          jamMulai: `${day}/${mNum}/2026 08:00`,
-          totalJam: jam,
-          jam: jam,
-          definisi: item.def,
-          jenisPekerjaan: item.def,
-          bagian: item.bag,
-          bagianOrder: item.bag,
-          namaMesin: item.mesin,
-          mesin: item.mesin,
-          jenis: item.jenis,
-          kategoriMesin: item.jenis
-        });
-      }
-    });
-  });
-
-  return jobs;
-}
-
-const DEFAULT_DOWNTIME_JOBS = createDefaultDowntimeJobs();
+const DEFAULT_DOWNTIME_REKAP = [];
+const DEFAULT_DOWNTIME_JOBS = [];
 
 function getStoredDowntimeCache() {
   try {
@@ -5135,6 +4947,10 @@ function getStoredDowntimeCache() {
     if (item) {
       const parsed = JSON.parse(item);
       if (parsed && (Array.isArray(parsed.rekap) || Array.isArray(parsed.laporanKerja))) {
+        if (parsed.laporanKerja?.some(x => String(x.id).startsWith("default_job_"))) {
+          localStorage.removeItem("siteki_kpi_downtime_cache");
+          return null;
+        }
         return parsed;
       }
     }
