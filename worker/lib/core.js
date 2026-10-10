@@ -1,4 +1,8 @@
 import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
+
+let postgresSql = null;
+let currentDbUrl = null;
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -9,7 +13,18 @@ export class HttpError extends Error {
 
 export function database(env) {
   if (!env.DATABASE_URL) throw new HttpError(503, "DATABASE_URL belum dikonfigurasi.");
-  return neon(env.DATABASE_URL);
+  if (env.DATABASE_URL.includes("neon.tech")) {
+    return neon(env.DATABASE_URL);
+  }
+  if (!postgresSql || currentDbUrl !== env.DATABASE_URL) {
+    postgresSql = postgres(env.DATABASE_URL, {
+      max: 10,
+      idle_timeout: 30,
+      connect_timeout: 10,
+    });
+    currentDbUrl = env.DATABASE_URL;
+  }
+  return postgresSql;
 }
 
 export function allowedOrigin(request, env) {
