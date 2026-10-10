@@ -8512,7 +8512,24 @@ function PartRequests({ go, session, notify }) {
   }, [isAdmin, session?.token]);
   const transactions = useMemo(() => {
     const grouped = new Map();
-    remote.data.forEach(row => { const key = row.transactionId; if (!key) return; if (!grouped.has(key)) grouped.set(key, { key, number: row.transactionNumber, date: row.tglPesan || row.tanggal, requester: row.pemesan, department: row.bagian, machine: row.mesin, status: row.transactionStatus || "Open", photoUrl: row.photoUrl, scanEnhanced: row.scanEnhanced, notes: row.transactionNotes, items: [] }); grouped.get(key).items.push(row); });
+    remote.data.forEach(row => {
+      const key = row.transactionId || row.id;
+      if (!key) return;
+      if (!grouped.has(key)) grouped.set(key, {
+        key,
+        number: row.transactionNumber || (row.id ? `BON-${String(row.id).slice(0, 8).toUpperCase()}` : "-"),
+        date: row.tglPesan || row.tanggal || "-",
+        requester: row.pemesan || "-",
+        department: row.bagian || "-",
+        machine: row.mesin || "-",
+        status: row.transactionStatus || row.status || "Open",
+        photoUrl: row.photoUrl || "",
+        scanEnhanced: row.scanEnhanced,
+        notes: row.transactionNotes || row.keterangan || "",
+        items: []
+      });
+      grouped.get(key).items.push(row);
+    });
     return [...grouped.values()].map(transaction => ({ ...transaction, closedItems: transaction.items.filter(item => String(item.status).toLowerCase() === "close").length }));
   }, [remote.data]);
   const itemRows = useMemo(() => transactions.flatMap(transaction => [...transaction.items].sort((a, b) => a.itemPosition - b.itemPosition).map(item => ({ transaction, item }))), [transactions]);
