@@ -103,18 +103,22 @@ async function parseResponse(response) {
       } catch {}
     }
     try {
-      const payload=JSON.parse(text);
-      throw new Error(payload?.message||`Permintaan server gagal (HTTP ${response.status}).`);
+      const payload = JSON.parse(text);
+      throw new Error(payload?.message || `Permintaan server gagal (HTTP ${response.status}).`);
     } catch(error) {
-      if(error instanceof SyntaxError)throw new Error(`Permintaan server gagal (HTTP ${response.status}).`);
+      if (error instanceof SyntaxError) throw new Error(`Permintaan server gagal (HTTP ${response.status}).`);
       throw error;
     }
   }
   if (!text.trim()) return { status: "success" };
   try {
     return JSON.parse(text);
-  } catch {
-    return { status: /success/i.test(text) ? "success" : "unknown", message: text };
+  } catch (error) {
+    if (/^\s*</.test(text)) {
+      throw new Error("Server mengembalikan respons HTML yang tidak valid (server sedang sibuk/cold start).");
+    }
+    if (/success/i.test(text)) return { status: "success", message: text };
+    throw new Error(`Respons server tidak valid: ${text.slice(0, 100)}`);
   }
 }
 

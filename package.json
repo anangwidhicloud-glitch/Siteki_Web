@@ -41,7 +41,8 @@
     "db:verify:welding-transformers": "node scripts/verify-transformers.mjs",
     "db:import:oil": "node scripts/import-oil-monitoring.mjs",
     "db:verify:oil": "node scripts/verify-oil-monitoring.mjs",
-    "db:verify:all": "node scripts/verify-all-migrations.mjs"
+    "db:verify:all": "node scripts/verify-all-migrations.mjs",
+    "db:backup": "node scripts/export-full-backup.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

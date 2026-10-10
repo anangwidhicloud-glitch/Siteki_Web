@@ -31,12 +31,21 @@ async function getMaintenance(env, params = {}) {
   const limit = params.limit ? Math.min(Math.max(1, Number(params.limit)), 5000) : null;
   let rows;
   if (days && Number.isFinite(days)) {
-    rows = await sql`
-      SELECT * FROM maintenance_inspections
-      WHERE inspected_on >= CURRENT_DATE - (${days} * INTERVAL '1 day')
-      ORDER BY inspected_on DESC, created_at DESC
-      ${limit ? sql`LIMIT ${limit}` : sql``}
-    `;
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    if (limit) {
+      rows = await sql`
+        SELECT * FROM maintenance_inspections
+        WHERE inspected_on >= ${cutoff}::date
+        ORDER BY inspected_on DESC, created_at DESC
+        LIMIT ${limit}
+      `;
+    } else {
+      rows = await sql`
+        SELECT * FROM maintenance_inspections
+        WHERE inspected_on >= ${cutoff}::date
+        ORDER BY inspected_on DESC, created_at DESC
+      `;
+    }
   } else if (limit) {
     rows = await sql`
       SELECT * FROM maintenance_inspections
