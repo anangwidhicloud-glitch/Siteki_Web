@@ -10,6 +10,9 @@ const wait = milliseconds => new Promise(resolve => setTimeout(resolve, millisec
 
 function endpoint(resource) {
   const base = API_BASE || "";
+  if (!base) {
+    return `/?resource=${encodeURIComponent(resource)}`;
+  }
   const separator = base.includes("?") ? "&" : "?";
   return `${base}${separator}resource=${encodeURIComponent(resource)}`;
 }
@@ -61,14 +64,17 @@ export const ENDPOINTS = {
 };
 
 function withQuery(url, params = {}) {
-  const target = new URL(url);
+  const base = typeof window !== "undefined" && window.location?.origin
+    ? window.location.origin
+    : "http://localhost:3000";
+  const target = new URL(url, base);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       target.searchParams.set(key, String(value));
     }
   });
   target.searchParams.set("_", Date.now());
-  return target.toString();
+  return /^https?:\/\//i.test(url) ? target.toString() : (target.pathname + target.search);
 }
 
 function requestKey(endpoint, params = {}) {

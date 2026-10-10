@@ -1101,7 +1101,7 @@ function Dashboard({ go, session }) {
       </div>
     </section>
     <div className="stats-grid">
-      <ModernStatCard icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading ? 0 : activeOrders.length} detail="Data Neon" color="mint" delay={0} />
+      <ModernStatCard icon={ClipboardList} label="Order terbuka" value={ordersRemote.loading ? 0 : activeOrders.length} detail="Data Server" color="mint" delay={0} />
       <ModernStatCard icon={TimerReset} label="Downtime YTD" value={downtimeYearToDate} unit=" jam" detail={downtimeDateRange} color="blue" delay={100} />
       <ModernStatCard icon={Gauge} label="KPI Perawatan" value={health} unit="%" detail="Data KPI terbaru" color="amber" delay={200} />
       <ModernStatCard icon={Package} label="Bon Sparepart Open" value={partRequestsRemote.loading ? 0 : openPartRequests.length} detail={partRequestsRemote.error ? "Data bon gagal dimuat" : "Klik untuk melihat daftar lengkap"} previewItems={openPartRequests.map(item => item.nama).filter(Boolean)} color="violet" delay={300} onClick={() => go("partRequests")} />
@@ -5579,7 +5579,7 @@ function Electricity({ notify, go, selectedOrder, session }) {
     </FormPanel>
     <CosPhiCamera open={cosPhiCameraOpen} onClose={() => setCosPhiCameraOpen(false)} onUse={reading => { setForm(current => ({ ...current, cos_phi: reading.value.toFixed(2) })); setCosPhiReading(reading); }} />
   </>;
-  return <><div className="stats-grid three"><Stat icon={Zap} label="HUHE HH terakhir" value={prev.huhe_hh || "…"} detail="Data Neon" tone="mint" /><Stat icon={Gauge} label="PV PLTS terakhir" value={prev.pv_plts || "…"} detail="Data Neon" tone="blue" /><Stat icon={AlertTriangle} label="Kesimpulan" value={prev.kesimpulan || "-"} detail={prev.tanggal || "Belum ada data"} tone="amber" /></div>
+  return <><div className="stats-grid three"><Stat icon={Zap} label="HUHE HH terakhir" value={prev.huhe_hh || "…"} detail="Data Server" tone="mint" /><Stat icon={Gauge} label="PV PLTS terakhir" value={prev.pv_plts || "…"} detail="Data Server" tone="blue" /><Stat icon={AlertTriangle} label="Kesimpulan" value={prev.kesimpulan || "-"} detail={prev.tanggal || "Belum ada data"} tone="amber" /></div>
     <FormPanel title="Input pengecekan energi listrik" onSubmit={submitEnergy} submit="Simpan pemeriksaan" extra={<div className="button-row"><button type="button" className="secondary" onClick={() => go("electricity", { electricityMode: "" })}>Ganti lokasi</button><button type="button" className="secondary" onClick={() => go("electricityData")}><Database size={17} /> Lihat data</button></div>}>
       <Field label="Tanggal"><input name="tanggal" type="date" lang="id-ID" value={form.tanggal} onChange={update} required /></Field><Field label="Jam"><input name="jam" type="time" value={form.jam} onChange={update} required /></Field>
       <Field label={`HUHE H (saat ini) · sebelumnya ${prev.huhe_h ?? "-"}`}><input name="huhe_h" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.huhe_h} onChange={update} required /></Field><Field label={`HUHE HH (sebelumnya) · data lalu ${prev.huhe_hh ?? "-"}`}><input name="huhe_hh" type="text" inputMode="decimal" pattern="[0-9]+([.,][0-9]+)?" placeholder="Koma atau titik" value={form.huhe_hh} onChange={update} required /></Field>
@@ -8053,7 +8053,7 @@ function Stock({ go, session, notify }) {
     ];
   });
 
-  return <><div className="stats-grid three"><Stat icon={Boxes} label="Total jenis part" value={remote.loading ? "…" : remote.data.length} detail="Data Neon" tone="blue" /><Stat icon={Package} label="Stok tersedia" value={remote.loading ? "…" : totalStock} detail="Seluruh gudang" tone="mint" /><Stat icon={AlertTriangle} label="Di bawah 10" value={remote.loading ? "…" : low} detail="Perlu perhatian" tone="amber" /></div>
+  return <><div className="stats-grid three"><Stat icon={Boxes} label="Total jenis part" value={remote.loading ? "…" : remote.data.length} detail="Data Server" tone="blue" /><Stat icon={Package} label="Stok tersedia" value={remote.loading ? "…" : totalStock} detail="Seluruh gudang" tone="mint" /><Stat icon={AlertTriangle} label="Di bawah 10" value={remote.loading ? "…" : low} detail="Perlu perhatian" tone="amber" /></div>
     <Panel title="Inventori spare part" action={<div className="button-row"><button className="secondary small" onClick={() => go("partRequests")}><History size={16} /> Daftar bon</button>{canUseStock && <button className="secondary small stock-use-button" onClick={() => go("stockUsage")}><Warehouse size={16} />Pakai stok</button>}{isAdmin && <button className="secondary small" onClick={() => setShowAddPart(true)}><Plus size={16} />Tambah part</button>}<button className="primary small" onClick={() => go("partOrder")}><Plus size={16} /> Buat bon</button></div>}>
       <Toolbar query={q} setQuery={setQ}>
         <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Sortir kategori">
