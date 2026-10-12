@@ -1,8 +1,15 @@
-const API_BASE = String(
-  import.meta.env?.VITE_API_URL ||
-  (typeof process !== "undefined" ? process.env?.VITE_API_URL : "") || ""
-)
-  .trim().replace(/\?+$/, "");
+const API_BASE = (() => {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname.toLowerCase();
+    if (host.includes("xo.je") || host.includes("infinityfree")) {
+      return "https://siteki.taild1b874.ts.net";
+    }
+  }
+  return String(
+    import.meta.env?.VITE_API_URL ||
+    (typeof process !== "undefined" ? process.env?.VITE_API_URL : "") || ""
+  ).trim().replace(/\?+$/, "");
+})();
 const responseCache = new Map();
 const pendingRequests = new Map();
 const RETRYABLE_READ_STATUSES = new Set([429, 500, 502, 503, 504]);
