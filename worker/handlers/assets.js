@@ -177,6 +177,11 @@ async function syncInspectionCheckResults(sql, inspectionId, category, checks, d
     }
 
     if (resultsToInsert.length > 0) {
+      const inspIds = resultsToInsert.map(r => r.inspection_id);
+      const itemIds = resultsToInsert.map(r => r.item_id);
+      const statuses = resultsToInsert.map(r => r.status);
+      const rawStatuses = resultsToInsert.map(r => r.raw_status);
+
       await sql`
         INSERT INTO maintenance_check_results (inspection_id, item_id, status, raw_status)
         SELECT
@@ -184,12 +189,8 @@ async function syncInspectionCheckResults(sql, inspectionId, category, checks, d
           r.item_id::uuid,
           r.status,
           r.raw_status
-        FROM jsonb_to_recordset(${JSON.stringify(resultsToInsert)}::jsonb) AS r(
-          inspection_id uuid,
-          item_id uuid,
-          status text,
-          raw_status text
-        )
+        FROM unnest(${inspIds}::uuid[], ${itemIds}::uuid[], ${statuses}::text[], ${rawStatuses}::text[])
+        AS r(inspection_id, item_id, status, raw_status)
         ON CONFLICT (inspection_id, item_id) DO UPDATE
         SET status = excluded.status,
             raw_status = excluded.raw_status
